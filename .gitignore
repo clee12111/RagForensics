@@ -1,0 +1,58 @@
+# Internal planning documents (local only)
+PLAN.md
+
+# Secrets & environment
+.env
+.env.local
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+env/
+
+# Data files (corpus is large; eval set is committed)
+data/corpus/
+*.sqlite
+*.db
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Langfuse local data
+langfuse-data/
+
+# Logs & traces
+*.log
+logs/
+traces/
+
+# Notebooks (if any used for exploration)
+.ipynb_checkpoints/
+*.ipynb
