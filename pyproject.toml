@@ -1,6 +1,6 @@
 [build-system]
 requires = ["hatchling"]
-build-backend = "hatchling.backends"
+build-backend = "hatchling.build"
 
 [project]
 name = "production-rag-forensics"
@@ -20,3 +20,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/production_rag_forensics"]

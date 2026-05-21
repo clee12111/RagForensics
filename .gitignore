@@ -32,6 +32,9 @@ wheels/
 venv/
 env/
 
+# Cloned source repos (corpus ingestion clones here)
+.cache/
+
 # Data files (corpus is large; eval set is committed)
 data/corpus/
 *.sqlite
