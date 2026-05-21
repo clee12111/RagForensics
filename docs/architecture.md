@@ -20,7 +20,7 @@
 
 ```
 FastAPI docs (cloned repo, pinned commit)
-  → chunker (strategy TBD)
+  → chunker (section-based, ## / ###, merge floor ~200 tok, target ~512 tok, B1 fence protection)
     → embedding model (TBD)
       → Pinecone index (upsert with metadata)
 ```
@@ -51,9 +51,12 @@ User query
 | Kubernetes | Docker Compose is sufficient; K8s would signal over-engineering |
 | UI polish | Minimal demo is fine; polish is not the deliverable |
 
+## Locked design decisions
+
+**Chunking (locked 2026-05-21):** Section-based on markdown `##` / `###` headers. Merge floor ~200 tokens (adjacent sections within a file combined until floor met). Target ~512 tokens. Never split a fenced code block — oversized chunks allowed and flagged (B1). Zero overlap. Token counting via tiktoken cl100k_base. Produces 584 chunks from 150 files (mean 427 tok, median 412 tok). Reasoning in journal 2026-05-21.
+
 ## Open architectural questions
 
-- **Chunking strategy:** Recursive character splitting vs. markdown-aware vs. AST-based for code blocks. Open because the corpus mixes prose, code, and API reference — optimal chunk boundaries are not obvious until measured.
 - **Embedding model choice:** Not yet selected. Tradeoff between cost, dimension size, and retrieval quality on this specific corpus needs measurement.
 - **Reranking threshold:** At what reranker score should retrieved chunks be filtered out? Requires baseline eval data to set empirically.
 - **Hybrid search weighting:** Sparse/dense balance for Reciprocal Rank Fusion (RRF). The right alpha depends on query category distribution and needs per-category measurement to tune.

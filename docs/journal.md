@@ -67,3 +67,27 @@
 
 **Next:**
 - Chunking strategy decision (src/production_rag_forensics/retrieval/chunker.py), made against the now-final corpus shape (31.7% code), with code-block integrity as a primary concern.
+
+## 2026-05-21 — Chunking strategy: section-based with fence-state-aware splitting
+
+**Worked on:** Designed and verified the chunking strategy against the resolved corpus, building src/production_rag_forensics/retrieval/chunker.py.
+
+**Decisions:**
+- Section-based chunking (split on markdown ## and ### headers) — corpus inspection showed sections are pre-sized sanely (nothing structurally over 2000 est. tokens) and code is tightly interleaved with explanatory prose, so author-defined section boundaries are natural, coherent chunk units. Matches the production-standard "let the document author decide cut points."
+- Merge floor ~200 tokens — 61% of sections are under 200 tokens; without merging, the corpus would produce context-starved micro-chunks (benchmarks show sub-100-token fragments score far worse). Small adjacent sections merge within a file to meet the floor.
+- Target ~512 tokens — the validated production default for chunk size.
+- Never split a fenced code block (B1) — preserving code integrity is the point of having resolved the includes; a torn code block produces half-function retrieval and hallucinated completions. Oversized chunks are allowed and logged rather than tearing code.
+- Zero overlap to start — section boundaries are clean semantic cuts that don't require overlap to heal; overlap is deferred as a measurable experiment.
+- Switched token counting from a chars/4 estimate to tiktoken (cl100k_base) — chars/4 undercounts code badly (one code-dense section measured 1461 est. vs 2831 real tokens, 93% off); real token counts are needed because chunk-size decisions and downstream limits are in real tokens. Added tiktoken as a dependency.
+
+**Measurements:**
+- 584 chunks from 150 files. Mean 427 tokens, median 412. Distribution: 73% in the 200-512 target band.
+- 61 chunks under the 200 floor, all classified as legitimate remnants (25 whole-file too small to merge, 36 end-of-file), zero merging bugs.
+- 1 chunk exceeds 2000 tokens (stream-data.md "Simulate a File", 2831 tokens, past the ~2500 "context cliff") — preserved whole per B1, flagged as a Phase 2 retrieval-quality watch item.
+- Fence-parity verification: 0 of 584 chunks have an odd code-fence count — torn code proven impossible across the corpus.
+
+**What surprised me:**
+- The first chunker used a naive header regex that matched "#" comment lines inside Python/shell code blocks as section headers, silently splitting 8 code blocks across chunk boundaries (26 odd-fence chunks). The aggregate distribution looked healthy; only the exhaustive fence-parity check caught it. Fixed by tracking fence open/close state line-by-line and recognizing headers only at fence-depth zero. Healthy aggregate metrics are not a correctness check — only content-level verification is.
+
+**Next:**
+- Embedding model decision and Pinecone indexing (src/production_rag_forensics/retrieval/embedder.py), and a Pinecone connection smoke test. Verify .env has the Pinecone key first.
