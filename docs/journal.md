@@ -41,7 +41,29 @@
 - Dependency install: clean on Python 3.13.3, all wheels prebuilt, no source compilation.
 
 **What surprised me:**
-- The corpus passed file-count and total-size checks while containing wrong-language content; only a content-level scan caught it. Count and size are integrity checks, not correctness checks.
+- The corpus passed file-count and total-size checks while containing wrong-language content (german); only a content-level scan caught it. Count and size are integrity checks, not correctness checks.
 
 **Next:**
 - Phase 2: chunking strategy (src/production_rag_forensics/retrieval/chunker.py), starting with one strategy over the 151-file corpus, then embedding and Pinecone indexing.
+
+## 2026-05-21 — Resolve doc include-directives into faithful prose+code corpus
+
+**Worked on:** Extended corpus ingestion to resolve FastAPI's {* ... *} include-directives, inlining referenced example code so the corpus matches what the rendered docs show.
+
+**Decisions:**
+- Resolved all include-directives at ingestion time rather than leaving pointers — a docs corpus that omits the code it teaches with is not faithful to the documentation a reader experiences. Resolution is part of canonical ingestion, not a separate step.
+- hl[] directives inline the whole referenced file; ln[] directives inline only the selected line range (1-indexed inclusive); bare directives inline the whole file. This matches what the docs site renders.
+- Dropped hl[] highlight metadata entirely rather than annotating it inline — highlighting is website presentation with no faithful plain-text equivalent; annotating it would pollute otherwise-clean example code.
+- Excluded release-notes.md from the corpus — a 160K-token changelog, not user-facing documentation.
+- Resolver fails loud on any unparseable or unresolvable directive rather than emitting a partial corpus.
+
+**Measurements:**
+- 433/433 directives resolved; 0 unresolved remaining. Source: ingestion verification grep.
+- Code-vs-prose ratio rose from 4.8% to 31.7% of characters inside fenced code blocks — the directives carried the majority of the corpus's code content. Source: post-resolution corpus scan.
+- Corpus: 150 markdown files, manifest records directives_resolved=433 and excluded_files. Total bytes fell (1449KB to 1034KB) despite adding code, because excluding the 160K-token release-notes.md removed more than the inlined code added.
+
+**What surprised me:**
+- Initial inspection assumed inlining whole files for all directives; the corpus actually contained ln[] content-selector directives where whole-file inlining would show code the docs deliberately hid. Inspecting the real directive variants before building the resolver caught this.
+
+**Next:**
+- Chunking strategy decision (src/production_rag_forensics/retrieval/chunker.py), made against the now-final corpus shape (31.7% code), with code-block integrity as a primary concern.

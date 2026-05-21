@@ -12,7 +12,7 @@
 | Reranking tier | Claude Haiku 4.5 (Phase 1 default — pending measurement, see Open questions) | Cheap-tier retrieval signal. |
 | Service layer | FastAPI | Production interface, also dogfooding the corpus. |
 | Agent interface | Custom MCP server (Streamable HTTP) | Exposes journal/failure-mode/cost as agent-queryable tools. |
-| Corpus | FastAPI documentation (English, release 0.136.1, 151 files) | Heterogeneous structure (prose, code, API refs, tutorials). Verifiable without domain ramp-up. |
+| Corpus | FastAPI documentation (English, release 0.136.1, 150 files, include-directives resolved to inline example code) | Heterogeneous structure (prose, code, API refs, tutorials). Verifiable without domain ramp-up. |
 
 ## Data flow
 
