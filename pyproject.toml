@@ -17,6 +17,7 @@ dependencies = [
     "httpx",
     "python-dotenv",
     "pydantic",
+    "tiktoken",
 ]
 
 [project.optional-dependencies]
