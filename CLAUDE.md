@@ -8,7 +8,7 @@ This is **Production RAG Stack Forensics** — a forensic engineering study of a
 
 The deliverable is the **engineering record** in `docs/`:
 - `docs/journal.md` — chronological engineering journal, updated every work session
-- `docs/failure_modes.md` — 3–5 documented failure modes with 5-section template each
+- `docs/failure_modes.md` — 4 documented failure modes (FM-1 retrieval miss, FM-2 parametric leakage, FM-3 contradiction, FM-4 synthesis gap)
 - `docs/architecture.md` — locked design decisions snapshot
 
 This is not a post-mortem. It is the real-time engineering record of how a production-grade RAG system gets built, with the judgment documented as it happens.
@@ -63,7 +63,7 @@ Each entry in `docs/failure_modes.md` follows the 5-section structure:
 4. **Mitigation** — what was tried, what worked, what didn't
 5. **Generalization** — what this says about production RAG stacks broadly
 
-Target 3–5 well-documented failure modes. Quality over quantity.
+Target 4 well-documented failure modes. Quality over quantity.
 
 ## Scope discipline
 
@@ -76,21 +76,32 @@ Out-of-scope items — do not propose adding these without explicit user request
 - Kubernetes (Docker Compose is sufficient)
 - Fine-tuning, multimodal, or UI polish
 
+Cross-encoder reranker was added then removed (measured neutral-to-negative); rank_bm25 hybrid retrieval is IN scope and adopted. Self-hosted GENERATION (Llama/Ollama) remains out of scope and is the subject of the planned next project.
+
 If the user proposes adding any of these, push back. Reference this list.
 
-## Stack (locked)
+## Stack (current)
 
 | Layer | Choice |
 |---|---|
-| Orchestration | LangGraph |
-| Vector DB | Pinecone (managed) |
-| Observability | Langfuse (self-hosted via Docker) |
-| Inference (primary) | Claude Sonnet 4.6 with prompt caching |
-| Inference (comparison) | GPT-5.4, Gemini 3.1 Pro |
-| Reranking | Claude Haiku 4.5 |
+| Orchestration | LangGraph (linear graph; abstraction does not yet earn its place — would on conditional/agentic branching) |
+| Vector DB | Pinecone (managed, serverless) |
+| Retrieval | Hybrid: dense (OpenAI text-embedding-3-small) + BM25 sparse, RRF-merged (k=60) |
+| Reranking | NONE — Haiku LLM reranker and cross-encoder both tested, both neutral-to-negative on this corpus, removed |
+| Observability | Langfuse (cloud — self-hosted Docker unavailable, no local virtualization) |
+| Generation (primary) | Claude Sonnet 4.6 with few-shot grounding prompt + prompt caching |
+| Generation (comparison) | GPT-5.5, Gemini 3.1 Pro (cross-provider study) |
+| Judge | Gemini 2.5 Flash (independent of Claude generation; flags ambiguous 2-3 scores) |
 | Service layer | FastAPI |
-| Agent interface | Custom MCP server (Streamable HTTP transport) |
-| Corpus | FastAPI documentation |
+| Agent interface | Custom MCP server (Streamable HTTP) — not yet built |
+| Corpus | FastAPI docs (English, 0.136.1, 150 files, directives resolved, 584 chunks) |
+
+## Current state (as of last session)
+
+- Phases 1-3 complete: corpus, chunking, embedding, indexing, retrieval, orchestration, eval harness, 4 failure modes documented with measurements
+- Mitigations measured: hybrid retrieval fixes FM-1 (5/5 records), few-shot grounding prompt fixes FM-2/FM-3 (8/10 records), reranking rejected for FM-4 (corpus-structural, unfixable by retrieval)
+- In progress: full optimized-stack run (3x for variance), then cross-provider study (GPT-5.5, Gemini 3.1 Pro)
+- Not yet built: MCP server, documentation polish, README refresh
 
 ## Commit message discipline
 
@@ -143,10 +154,18 @@ Build files in the order specified in PLAN.md § "File-by-file build order." Do 
 
 ## Eval methodology
 
-- 100 questions, stratified across 5 categories (20 each): conceptual, syntactic, cross-reference, edge-case, out-of-scope
-- Questions hand-written by the user from real FastAPI usage. Do NOT generate eval questions.
-- Metrics: faithfulness (5-point manual), precision@5, latency p50/p95, cost per query by stage
+- 150 questions, stratified across 5 categories (30 each): conceptual,
+  syntactic, cross_reference, edge_case, out_of_scope
+- Questions generated via GPT (constraints) + Gemini (drafting), curated by
+  Cody. No Anthropic model in the generation chain (avoids contamination of
+  the Anthropic-generated answers). Do NOT regenerate eval questions.
+- Metrics: faithfulness (0-5, LLM-as-judge via Gemini 2.5 Flash), precision@5
+  (LLM-judged chunk relevance), latency per-stage (Langfuse traces), cost per
+  query by stage
 - Always report per-category breakdown. Never aggregate-only.
+- Comparisons must use the same judge for before and after — judge prompt
+  changes shift calibration (observed 4.41->4.57 faithfulness drift on identical
+  answers when precision@5 was added to the judge prompt).
 
 ## Cost discipline
 
@@ -173,4 +192,4 @@ Stop and tell the user before proceeding if:
 ## Reference repos
 
 - `polymarket-autopsy` — methodology applied to a custom trading system. Reference for the 5-section template.
-- `aether` — bottom-up retrieval primitives. Reference for chunking, hybrid search, RRF patterns. This repo is the production-tools counterpart.
+- `aether` — bottom-up retrieval primitives. Reference for chunking, hybrid search, RRF patterns. This repo is the production-tools counterpart. aether also implemented Pydantic-validated iterative/agentic retrieval — the orchestration-layer answer to FM-4 (knowledge fragmentation) that this project documents but does not build.
