@@ -294,15 +294,16 @@ def eval_results(run: str = "optimized_run1") -> str:
 
 
 @mcp.tool()
-def retrieval_latency(limit: int = 200) -> str:
+async def retrieval_latency(limit: int = 200) -> str:
     """
     Return p50, p95, mean, min, max latency (ms) for the retrieve stage from Langfuse.
 
     Args:
         limit: Max number of recent retrieve spans to analyse (default 200).
     """
+    import asyncio
     try:
-        obs = _fetch_observations("retrieve", limit=limit)
+        obs = await asyncio.to_thread(_fetch_observations, "retrieve", limit)
     except RuntimeError as e:
         return f"Error: {e}"
 
@@ -381,13 +382,15 @@ def cost_per_query_stage(run: str = "optimized_run1") -> str:
 
 
 @mcp.tool()
-def trace_query(trace_id: str) -> str:
+async def trace_query(trace_id: str) -> str:
     """
     Fetch a single Langfuse trace by ID and return metadata, spans, and costs.
 
     Args:
         trace_id: Langfuse trace ID (visible in the Langfuse UI or eval JSONL records).
     """
+    import asyncio
+
     if not trace_id.strip():
         return "Error: trace_id is required."
     try:
@@ -395,14 +398,20 @@ def trace_query(trace_id: str) -> str:
     except RuntimeError as e:
         return f"Error: {e}"
 
+    def _fetch_trace():
+        return lf.api.trace.get(trace_id.strip())
+
+    def _fetch_spans():
+        page = lf.api.observations.get_many(trace_id=trace_id.strip(), limit=50)
+        return list(page.data) if page and page.data else []
+
     try:
-        trace = lf.api.trace.get(trace_id.strip())
+        trace = await asyncio.to_thread(_fetch_trace)
     except Exception as e:
         return f"Error fetching trace '{trace_id}': {e}"
 
     try:
-        obs_page = lf.api.observations.get_many(trace_id=trace_id.strip(), limit=50)
-        obs_list = list(obs_page.data) if obs_page and obs_page.data else []
+        obs_list = await asyncio.to_thread(_fetch_spans)
     except Exception:
         obs_list = []
 
