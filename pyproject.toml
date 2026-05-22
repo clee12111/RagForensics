@@ -23,6 +23,7 @@ dependencies = [
     "google-genai",
     "sentence-transformers",
     "rank-bm25",
+    "mcp[cli]",
 ]
 
 [project.optional-dependencies]
