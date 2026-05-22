@@ -21,7 +21,7 @@
 ```
 FastAPI docs (cloned repo, pinned commit)
   → chunker (section-based, ## / ###, merge floor ~200 tok, target ~512 tok, B1 fence protection)
-    → embedding model (TBD)
+    → OpenAI text-embedding-3-small (1536-dim, symmetric, own-embedder call)
       → Pinecone index (upsert with metadata)
 ```
 
@@ -55,9 +55,11 @@ User query
 
 **Chunking (locked 2026-05-21):** Section-based on markdown `##` / `###` headers. Merge floor ~200 tokens (adjacent sections within a file combined until floor met). Target ~512 tokens. Never split a fenced code block — oversized chunks allowed and flagged (B1). Zero overlap. Token counting via tiktoken cl100k_base. Produces 584 chunks from 150 files (mean 427 tok, median 412 tok). Reasoning in journal 2026-05-21.
 
+**Embedding (locked 2026-05-21):** OpenAI text-embedding-3-small, 1536 dims, symmetric (same call for corpus and queries; no input_type). Implemented as an explicit own-embedder call — not Pinecone integrated embedding — to preserve per-stage cost measurement. General model chosen over code-specialized alternatives; the corpus is majority prose and code-specialist embedding risks a prose penalty. Code-specialized embedding deferred as a measured upgrade if the syntactic eval category underperforms. Reasoning in journal 2026-05-21.
+
 ## Open architectural questions
 
-- **Embedding model choice:** Not yet selected. Tradeoff between cost, dimension size, and retrieval quality on this specific corpus needs measurement.
+- **Code-specialized embedding:** text-embedding-3-small is the locked choice; a code-specialist model (e.g. voyage-code-3) is a held upgrade if syntactic eval category underperforms in Phase 2 baseline.
 - **Reranking threshold:** At what reranker score should retrieved chunks be filtered out? Requires baseline eval data to set empirically.
 - **Hybrid search weighting:** Sparse/dense balance for Reciprocal Rank Fusion (RRF). The right alpha depends on query category distribution and needs per-category measurement to tune.
 - **Reranker model choice.** Haiku 4.5 is the Phase 1 default because the project already has Anthropic access and using a generalist LLM as a reranker is itself an interesting forensic question. Alternatives (Cohere Rerank 3, Voyage Rerank-2) will be considered if Haiku's measurements show it doesn't earn its place. Decision deferred to Phase 2 baseline eval.

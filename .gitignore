@@ -37,6 +37,7 @@ env/
 
 # Data files (corpus is large; eval set is committed)
 data/corpus/
+data/embeddings/
 *.sqlite
 *.db
 
@@ -59,3 +60,6 @@ traces/
 # Notebooks (if any used for exploration)
 .ipynb_checkpoints/
 *.ipynb
+
+# Scratch / throwaway diagnostic scripts (underscore prefix convention)
+scripts/_*.py

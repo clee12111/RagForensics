@@ -91,3 +91,25 @@
 
 **Next:**
 - Embedding model decision and Pinecone indexing (src/production_rag_forensics/retrieval/embedder.py), and a Pinecone connection smoke test. Verify .env has the Pinecone key first.
+
+## 2026-05-21 — Embedding stage: provider selection and corpus indexing prep
+
+**Worked on:** Selected the embedding provider/model and built the embedder (src/production_rag_forensics/retrieval/embedder.py), embedding all 584 chunks to 1536-dim vectors persisted for indexing.
+
+**Decisions:**
+- Embedding via an explicit own-embedder call (not Pinecone integrated embedding) — the eval requires cost-per-pipeline-stage, and integrated embedding would fuse embedding cost into Pinecone operations, making the embedding stage unmeasurable as a separate cost. Vector visibility in Pinecone is unaffected either way; the decision is about cost-attribution, not vector accessibility.
+- Provider switched Voyage → OpenAI text-embedding-3-small mid-session. Voyage (voyage-3.5, 1024-dim) was selected first for its free tier, but its no-payment free tier is 3 RPM / 10K TPM — a single 128-chunk batch (~61K tokens) is 6x the per-minute token budget, which backoff cannot rescue because the problem is request size, not request frequency. OpenAI was chosen because: the $5 deposit is needed for Phase 5 GPT generation anyway (serves double duty), Tier 1 limits (1M TPM / 3000 RPM) eliminate throttling at corpus scale, cost is negligible (~$0.005 for the full corpus), and a hard $5 monthly cap was set as structural spend protection.
+- Model text-embedding-3-small at full 1536 dims, no dimension reduction — dimension is a storage/speed/quality lever that is irrelevant at this corpus size; full quality, no reason to reduce.
+- General embedding model, not a code-specialized one, despite the 31.7%-code corpus — chunks are mixed prose+code and the majority is prose; a code specialist risks a prose penalty. Code-specialized embedding is held as a measured upgrade if the syntactic eval category later underperforms.
+
+**Measurements:**
+- 584 chunks embedded, all dim exactly 1536. Source: embedder Stage 2 verification.
+- 253,134 tokens (tiktoken cl100k_base), implied cost $0.005 at $0.02/1M — the embedding-stage cost number.
+- 5 requests, 3.9s wall-clock, zero rate-limit backoff at OpenAI Tier 1.
+- Persisted 584 complete records (vector + chunk text + metadata) to data/embeddings/chunks_embedded.jsonl, 18.4 MB.
+
+**What surprised me:**
+- The real Voyage free-tier limit (3 RPM / 10K TPM) only became unambiguous when the actual corpus run returned the explicit error string — the earlier smoke test inferred a limit from one 429, and the Voyage docs listed the higher paid-tier numbers, so neither gave ground truth. The run did. Inferring a limit from a single observation is not the same as confirming it.
+
+**Next:**
+- Pinecone indexing: create a serverless index at 1536 dims (cosine), upsert the 584 vectors from chunks_embedded.jsonl with metadata, and verify retrieval returns the known-correct chunk for a few hand-checked queries. Indexer reads the persisted file — no re-embedding.
