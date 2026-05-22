@@ -1,5 +1,28 @@
 # Engineering Journal
 
+## 2026-05-22 — MCP server build
+
+**Worked on:** Custom MCP server exposing 6 instrumentation tools over Streamable HTTP; verified from Claude Desktop.
+
+**Decisions:**
+- Streamable HTTP transport (not stdio): required for Claude Desktop remote MCP; `stateless_http=True` — no session affinity needed for read-only tools
+- Static bearer token auth via Starlette `BaseHTTPMiddleware` wrapper: MCP SDK's built-in `token_verifier` requires full `AuthSettings` (OAuth issuer URL); simpler to wrap the ASGI app directly
+- `cost_per_query_stage` reads eval JSONL files, not Langfuse: per-query cost is not instrumented on Langfuse spans (only latency); JSONL is the authoritative cost record
+- Langfuse latency field is in seconds (not ms): multiplied by 1000 in `retrieval_latency` tool
+
+**Measurements:**
+- Retrieve stage p50: 86ms, p95: 520ms (100 spans, BM25 + Pinecone + RRF)
+- Generate mean cost: $0.0056/query (optimized_run1, Sonnet 4.6 with prompt caching)
+- All 6 tools verified live over HTTP against Claude Desktop config
+
+**What surprised me:**
+- Langfuse `observations.get_many(name='retrieve')` returns spans with `name=None` in the response object even though the filter works correctly — the name field is not hydrated in the API response
+
+**Next:**
+- Update CLAUDE.md: MCP server is built (remove "not yet built" note)
+- README refresh
+- Push to remote
+
 ## 2026-05-22 — Cross-provider study + judge bug discovery
 
 **Worked on:** Cross-provider generation (Sonnet 4.6, GPT-5.5, Gemini-3.1-flash-lite) on the optimized stack; surfaced and fixed two eval-harness bugs; corrected cross-provider and within-stack measurements.

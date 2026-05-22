@@ -93,15 +93,15 @@ If the user proposes adding any of these, push back. Reference this list.
 | Generation (comparison) | GPT-5.5, Gemini 3.1 Pro (cross-provider study) |
 | Judge | Gemini 2.5 Flash (independent of Claude generation; flags ambiguous 2-3 scores) |
 | Service layer | FastAPI |
-| Agent interface | Custom MCP server (Streamable HTTP) — not yet built |
+| Agent interface | Custom MCP server (Streamable HTTP) — built, 6 tools, localhost:8001 |
 | Corpus | FastAPI docs (English, 0.136.1, 150 files, directives resolved, 584 chunks) |
 
 ## Current state (as of last session)
 
 - Phases 1-3 complete: corpus, chunking, embedding, indexing, retrieval, orchestration, eval harness, 4 failure modes documented with measurements
 - Mitigations measured: hybrid retrieval fixes FM-1 (5/5 records), few-shot grounding prompt fixes FM-2/FM-3 (8/10 records), reranking rejected for FM-4 (corpus-structural, unfixable by retrieval)
-- In progress: full optimized-stack run (3x for variance), then cross-provider study (GPT-5.5, Gemini 3.1 Pro)
-- Not yet built: MCP server, documentation polish, README refresh
+- Complete: all phases including cross-provider study (Sonnet 4.6 / GPT-5.5 / Gemini-3.1-flash-lite) and MCP server (6 tools)
+- Remaining: documentation polish, README refresh
 
 ## Commit message discipline
 
