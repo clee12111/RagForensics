@@ -5,6 +5,14 @@ across 150 questions (30 per category: conceptual, syntactic, cross_reference, e
 out_of_scope). Faithfulness scored 0–5 by Gemini 2.5 Flash; ambiguous (2–3) flagged for
 manual review.
 
+Precision@5 methodology notes: (1) out_of_scope is excluded from P@5 aggregates — correct
+behavior there is refusal with zero relevant chunks, so P@5=0 is the ideal score, not a
+retrieval failure; including it deflates aggregates without diagnostic meaning. (2) P@5 is
+not reported as a retrieval metric in the cross-provider study — retrieval is deterministic
+and identical across providers, so observed P@5 differences are judge-answer contamination
+(the judge infers chunk relevance from the answer's citation style, not from chunk content),
+not a measure of retrieval quality.
+
 Overall: mean faithfulness 4.41. Flagged ambiguous: 22 (14.7%). Faith=0: 5 (3.3%).
 
 ---
@@ -61,27 +69,31 @@ distribution lifted — a flagged partial answer is strictly better than a confi
 hallucination.
 
 Precision@5 (retrieval quality, mostly stable — retrieval is deterministic so
-run spread is near-zero):
+run spread is near-zero; out_of_scope shown for completeness, excluded from aggregate):
 | Category | Baseline | Optimized | Delta | Real? |
 |---|---|---|---|---|
 | conceptual | 0.60 | 0.59 | -0.01 | noise |
 | syntactic | 0.58 | 0.65 | +0.07 | yes |
 | cross_reference | 0.59 | 0.58 | -0.01 | noise |
 | edge_case | 0.47 | 0.46 | -0.00 | noise |
-| out_of_scope | 0.34 | 0.15 | -0.19 | yes |
+| out_of_scope | 0.34 | 0.15 | -0.19 | yes (see note) |
+| TOTAL (excl. out_of_scope) | 0.560 | 0.583 | +0.02 | noise |
 
 Two precision@5 findings:
 - syntactic +0.07: hybrid retrieval's BM25 component helps keyword-heavy
   syntactic queries find exact-term chunks. Retrieval genuinely improved here.
-- out_of_scope -0.19: hybrid retrieves MORE keyword-matched-but-irrelevant
-  chunks on unanswerable questions (BM25 matches keywords in queries about
-  nonexistent features). Yet faithfulness on out_of_scope ROSE to 4.99 — the
-  grounding prompt makes the model refuse cleanly despite the noisier context.
-  Lower retrieval precision, higher answer quality: the two metrics together
-  reveal what neither shows alone. This is the diagnostic value of precision@5 —
-  it caught a retrieval degradation hidden behind a rising faithfulness score.
-  Implication (documented, not built): a relevance-threshold gate would prevent
-  low-relevance chunks reaching generation on out-of-scope queries.
+- out_of_scope -0.19: shown for diagnostic value only; out_of_scope is excluded
+  from P@5 aggregates because correct behavior is refusal with zero relevant
+  chunks. The finding is nonetheless meaningful: hybrid retrieves MORE
+  keyword-matched-but-irrelevant chunks on unanswerable questions (BM25 matches
+  keywords in queries about nonexistent features). Yet faithfulness on
+  out_of_scope ROSE to 4.99 — the grounding prompt makes the model refuse
+  cleanly despite the noisier context. Lower retrieval precision, higher answer
+  quality: the two metrics together reveal what neither shows alone. This is the
+  diagnostic value of precision@5 — it caught a retrieval degradation hidden
+  behind a rising faithfulness score. Implication (documented, not built): a
+  relevance-threshold gate would prevent low-relevance chunks reaching
+  generation on out-of-scope queries.
 
 Mechanism attribution: faithfulness rose broadly while precision@5 stayed
 roughly flat (except the two noted). This means the faithfulness gains came
@@ -89,6 +101,12 @@ primarily from the few-shot grounding prompt (generation-side), not from
 retrieval relevance changes — consistent with the per-failure-mode findings
 where grounding fixed FM-2/FM-3 and hybrid fixed FM-1's retrieval misses
 specifically. The aggregate improvement is generation-led, retrieval-assisted.
+
+Faithfulness gains (4.57 → 4.82) are generation-led — the few-shot grounding
+prompt, not retrieval. Aggregate P@5 stayed flat (+0.023, answerable categories
+only) while faithfulness rose, localizing the improvement to generation. Hybrid
+retrieval contributed a targeted FM-1 fix (5 retrieval-miss records), not a
+broad precision lift.
 
 ---
 
@@ -523,3 +541,128 @@ is a standard retrieval optimization. Iterative/agentic retrieval with a validat
 sufficiency gate is the orchestration-layer answer to knowledge fragmentation; a prior
 implementation of this pattern (Pydantic-validated re-retrieval) exists in the aether
 project.
+
+---
+
+## Eval-Harness Bug: Judge Blind to Chunk Content
+
+**This is not a 5th RAG failure mode.** It is a measurement-system failure that produced
+incorrect faithfulness scores for the entire project until corrected. Documented here
+because it invalidated the initial cross-provider numbers and required a full rescore.
+The repo has 4 RAG failure modes (FM-1 through FM-4) and this 1 eval-harness failure mode.
+
+### Symptom
+
+The judge reported near-identical faithfulness for Anthropic and OpenAI (~4.8) but a
+catastrophic collapse for Gemini 3.1 Pro Preview (2.87 vs 4.87). The result was
+implausible — same retrieval, same prompt, only the generation model changed.
+
+### Measurement
+
+When `gemini-3.1-pro-preview` was used as the generation model, 101/150 answers were
+under 300 characters (mean answer length ~170 chars). Anthropic: 0/150 under 300 chars.
+
+Initial broken scores (judge scoring against empty chunk bodies):
+| Provider | Faith | P@5 |
+|---|---|---|
+| Anthropic | 4.87 | 0.47 |
+| OpenAI | 4.79 | 0.57 |
+| Google (3.1-pro-preview) | 2.87 | 0.20 |
+
+Corrected scores (fixed judge + fixed generation model):
+| Provider | Model | Faith | Gen cost (150q) |
+|---|---|---|---|
+| Anthropic | claude-sonnet-4-6 | 4.45 | $2.07 |
+| OpenAI | gpt-5.5 | 4.39 | $5.06 |
+| Google | gemini-3.1-flash-lite | 4.62 | $0.18 |
+
+Two distinct bugs, both required fixes:
+
+**Bug 1 — Generation truncation (Gemini 3.1 Pro Preview):** `max_output_tokens=1024`
+applies to thinking tokens + visible answer tokens combined. Probe confirmed
+`thoughts_token_count=96` for trivial queries; complex RAG prompts consumed 900+
+thinking tokens, leaving <100 for the visible answer. Fix: switched to
+`gemini-3.1-flash-lite` with `thinking_budget=0` (thinking fully eliminated,
+confirmed `thoughts_token_count=None`). Same `max_output_tokens=1024` now applies
+entirely to the answer.
+
+**Bug 2 — Judge scoring against empty chunks:** `harness.py` stripped the `text` field
+when serializing retrieved chunks to JSONL (`chunks_out` saved only `source_file`,
+`score`, `chunk_index`). The judge's `_format_chunks()` calls `c.get("text", "")` — so
+every faithfulness judgment was made against filenames only, never chunk content. The
+judge inferred faithfulness from answer structure (citation markers, hedging language)
+rather than from actual content. Models following the few-shot citation pattern scored
+high; models deviating from that pattern scored low. Fix: `"text": c.get("text", "")`
+added to `chunks_out`. Anthropic/OpenAI chunk text reattached via deterministic
+retrieval replay (same query → same chunks in same order, zero mismatches across 300
+records).
+
+### Mechanism
+
+The bug was invisible for the within-stack comparison (Anthropic-only) because all
+answers followed the same citation pattern, so the judge's proxy was consistent. Provider
+diversity exposed the bug: Gemini-3.1-flash-lite answers style differently — less
+structured headers, citation conventions differ slightly — and the proxy broke. The
+initial broken result ("Gemini 2 points worse") was 100% artifact, not provider signal.
+
+P@5 contamination is a related but separate artifact: with empty chunk bodies, the
+judge inferred chunk relevance from whether the answer cited chunks. Same chunks scored
+0.0, 1.0, 0.0 across three providers on the same question (c1_01). This confirmed the
+judge was reading the answer, not the chunks. P@5 is excluded from cross-provider
+reporting for this reason; see methodology note at top of file.
+
+### Mitigation
+
+Both bugs fixed. Re-ran Gemini generation only (Anthropic/OpenAI answers were complete
+and structurally correct — only mis-scored). Re-scored all three with the fixed judge
+(`--rescore`). Corrected numbers above.
+
+### Generalization
+
+Homogeneous eval hides measurement bugs. If only one generator is ever evaluated, a
+proxy-based judge (scoring citation style instead of factual grounding) appears to work
+correctly because the proxy is consistent. Adding a stylistically-different generator
+broke the proxy and exposed the bug. Eval harness correctness requires: (1) chunk text
+preserved in records so the judge scores grounding against actual content; (2) provider
+diversity as a measurement-system stress test, not just a product comparison.
+
+---
+
+## Cross-Provider Study
+
+Same optimized stack (hybrid retrieval + few-shot grounding prompt), only generation
+backend changed. Retrieval is deterministic and identical across all three runs — any
+faithfulness difference is attributable solely to generation behavior.
+
+**Tier confound note:** This is not a tier-matched comparison. Sonnet 4.6 is a
+mid-tier model; GPT-5.5 is OpenAI's flagship; Gemini-3.1-flash-lite is a small/fast
+model. Results cannot be read as a ranking — they reflect production-realistic
+per-provider choices under a single-axis generation swap with everything else held
+constant.
+
+**Faithfulness (150 questions, same judge):**
+| Category | Anthropic | OpenAI | Google |
+|---|---|---|---|
+| conceptual | 4.17 | 4.10 | 4.40 |
+| syntactic | 4.73 | 4.73 | 4.70 |
+| cross_reference | 4.03 | 4.03 | 4.43 |
+| edge_case | 4.37 | 4.30 | 4.63 |
+| out_of_scope | 4.93 | 4.80 | 4.93 |
+| TOTAL | 4.45 | 4.39 | 4.62 |
+
+**Generation cost (150 questions):** Anthropic $2.07 / OpenAI $5.06 / Google $0.18.
+Cost spread: 28x between Google and OpenAI.
+
+**P@5 not reported as retrieval metric.** Retrieval is identical across providers;
+observed P@5 differences (e.g. OpenAI 0.63 vs Anthropic/Google 0.52) are
+judge-answer contamination — the judge infers chunk relevance from the answer's
+citation style, not from chunk content. Identical chunks scored differently across
+providers. See methodology note and eval-harness bug section above.
+
+**Finding:** 0.23-point faithfulness spread (4.39–4.62) across 28x cost difference.
+On this corpus, with strong hybrid retrieval and a few-shot grounding prompt,
+generation capability is not the bottleneck — all three providers produce broadly
+comparable faithfulness. A small flash-tier model at $0.18/150q matches flagship
+models at $2–5/150q within measurement noise. Claim bounded to this corpus and
+stack configuration; does not generalize to corpora where generation quality
+(reasoning, synthesis) matters more than context-following.

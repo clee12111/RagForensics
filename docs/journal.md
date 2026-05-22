@@ -1,5 +1,31 @@
 # Engineering Journal
 
+## 2026-05-22 — Cross-provider study + judge bug discovery
+
+**Worked on:** Cross-provider generation (Sonnet 4.6, GPT-5.5, Gemini-3.1-flash-lite) on the optimized stack; surfaced and fixed two eval-harness bugs; corrected cross-provider and within-stack measurements.
+
+**Decisions:**
+- Built provider-agnostic generation (GENERATION_PROVIDER flag), mirroring the judge's provider abstraction
+- Re-ran only Gemini generation + re-scored all three (budget: Anthropic/OpenAI answers structurally sound, only mis-scored; Gemini truncated, needed regen) — total added spend ~$2 vs ~$12 for full regeneration
+- Dropped Gemini generation to gemini-3.1-flash-lite (thinking_budget=0): eliminates thinking-token cost inflation, keeps generator independent from the gemini-2.5-flash judge (cross-generation separation)
+- Cross-provider framed as production-realistic per-provider choices, not tier-matched — tier confound documented, reported as behavioral/cost divergence not a ranking
+- P@5 excluded from cross-provider (answer-contaminated); out_of_scope excluded from within-stack P@5 (inverse-relevance)
+
+**Measurements:**
+- Cross-provider faithfulness: Anthropic 4.45, OpenAI 4.39, Google 4.62 — 0.23-point spread across 28x cost ($0.18 / $2.07 / $5.06 per 150q)
+- Judge bug correction reversed the result: Gemini 2.87 (broken judge) → 4.62 (fixed judge); original "Gemini collapse" was 100% artifact (thinking-mode truncation + judge scoring against empty chunks)
+- Within-stack P@5 corrected: baseline 0.560 → optimized 0.583 (answerable categories only), +0.023 = noise; faithfulness gains are generation-led, not retrieval-led
+- Gemini 3.1 Pro Preview: 101/150 answers under 300 chars due to thinking tokens consuming max_output_tokens budget; thoughts_token_count ~1161 on a single observed query
+
+**What surprised me:**
+- The judge had scored against empty chunk bodies for the entire project — invisible until a stylistically-different model (Gemini) broke the citation-style proxy the judge had silently relied on; homogeneous eval hid the bug, provider diversity exposed it
+- The corrected cross-provider result inverted the broken one — a near-published wrong conclusion ("Gemini is 2 points worse") caught by suspicion of an implausible score plus mechanical investigation
+- At strong retrieval + grounding, a flash-lite model matched flagships at 1/28th the cost — generation capability was not the bottleneck on this corpus
+
+**Next:**
+- MCP server (exposes journal/failure-modes/eval/trace/cost as agent-queryable tools) + documentation polish — converging session
+- "What I'd do from the start" retrospective: tier-matched models, chunk text preserved in records from day one, judge independence designed in rather than discovered
+
 ## 2026-05-22 — Full optimized-stack run (3x): aggregate validation
 
 **Worked on:** Ran optimized stack (hybrid + few-shot prompt) 3x for variance; aggregated against re-scored baseline on faithfulness and precision@5.

@@ -7,11 +7,15 @@ State schema (TypedDict):
     query:             str           — the user's question
     query_embedding:   list[float]   — 1536-dim vector from text-embedding-3-small
     retrieved_chunks:  list[dict]    — top-k chunks: {text, source_file, header_path, score}
-    answer:            str           — Claude Sonnet 4.6 grounded response
+    answer:            str           — grounded response from the configured provider
 
 Public API:
     run_query(query: str) -> dict
-        Returns {"query": str, "answer": str, "chunks": list[dict]}
+        Returns {"query": str, "answer": str, "chunks": list[dict], ...}
+
+Configuration:
+    GENERATION_PROVIDER — set to "anthropic" (default), "openai", or "google"
+    to swap the generation backend while holding retrieval constant.
 
 Tracing:
     Each node wraps its work in a Langfuse observation span.
@@ -24,7 +28,6 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from anthropic import Anthropic
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 from openai import OpenAI
@@ -32,18 +35,25 @@ from pinecone import Pinecone
 from typing_extensions import TypedDict
 
 from production_rag_forensics.observability.client import get_client, langfuse_span
+from production_rag_forensics.orchestration.generation import generate_answer
 
 load_dotenv()
 
+# ── Provider flag ─────────────────────────────────────────────────────────────
+# Change this to swap the generation backend. Retrieval is held constant.
+# "anthropic" — claude-sonnet-4-6 with prompt caching (default)
+# "openai"    — gpt-5.5
+# "google"    — gemini-3.1-pro-preview
+
+GENERATION_PROVIDER = os.environ.get("GENERATION_PROVIDER", "anthropic")
+
 # ── Client singletons (module-level; one init per process) ────────────────────
 
-_oai      = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-_pc       = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
-_index    = _pc.Index("fastapi-docs-v1")
-_anthropic = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+_oai   = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+_pc    = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+_index = _pc.Index("fastapi-docs-v1")
 
 EMBED_MODEL        = "text-embedding-3-small"
-CLAUDE_MODEL       = "claude-sonnet-4-6"
 TOP_K              = 5
 RERANKER_BACKEND   = "hybrid"          # "hybrid" | "none" | "cross_encoder" | "haiku"
 _FETCH_K: dict[str, int] = {
@@ -53,14 +63,13 @@ _FETCH_K: dict[str, int] = {
     "hybrid":         20,  # dense_n for Pinecone; BM25 runs over all 584 locally
 }
 
-# System prompt as a structured block with cache_control.
-# The system prompt is the stable, per-deployment surface — same text on every
-# query — so it is the right thing to cache.  Retrieved chunks rotate per query
-# and are NOT cached: caching rotating context would thrash the cache (a new
-# cache entry per unique chunk set) and waste money with no hit benefit.
+# System prompt text — passed as plain text to generate_answer().
+# Each provider implementation handles its own caching wrapper:
+#   Anthropic: wraps in cache_control block (ephemeral); activates at >1024 tokens.
+#   OpenAI:    uses automatic prompt caching — no wrapper needed.
+#   Google:    no caching at RAG prompt size; passed as system_instruction.
 #
-# The prompt must exceed 1024 tokens for Anthropic's ephemeral cache to activate.
-# The four worked examples (~1300 tokens) push it well above that floor.
+# The four worked examples push the prompt well above the 1024-token Anthropic floor.
 _SYSTEM_PROMPT_TEXT = """\
 You are a precise technical assistant answering questions about the FastAPI framework.
 
@@ -148,14 +157,6 @@ END OF EXAMPLES
 
 Answer the question using only the provided context chunks. Apply the pattern above: trace every claim to a chunk, be explicit when the context does not fully cover the question, and do not introduce any type, method, or behavioral detail that is absent from the chunks.\
 """
-
-SYSTEM_PROMPT_BLOCK = [
-    {
-        "type": "text",
-        "text": _SYSTEM_PROMPT_TEXT,
-        "cache_control": {"type": "ephemeral"},
-    }
-]
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -268,7 +269,7 @@ def retrieve(state: RAGState) -> RAGState:
 
 
 def generate(state: RAGState) -> RAGState:
-    """Generate a grounded answer from retrieved chunks via Claude Sonnet 4.6."""
+    """Generate a grounded answer from retrieved chunks via the configured provider."""
     lf = get_client()
     query  = state["query"]
     chunks = state["retrieved_chunks"] or []
@@ -280,40 +281,32 @@ def generate(state: RAGState) -> RAGState:
     user_message = f"Question: {query}\n\nContext:\n{formatted}\n\nAnswer:"
 
     with langfuse_span(lf, name="generate", obs_type="generation",
-                       input={"chunk_count": len(chunks), "model": CLAUDE_MODEL}):
-        response = _anthropic.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=512,
-            temperature=0,
-            system=SYSTEM_PROMPT_BLOCK,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        answer = response.content[0].text
-
-        usage = response.usage
-        cache_created = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        cache_read    = getattr(usage, "cache_read_input_tokens", 0) or 0
+                       input={"chunk_count": len(chunks), "provider": GENERATION_PROVIDER}):
+        result = generate_answer(GENERATION_PROVIDER, _SYSTEM_PROMPT_TEXT, user_message)
 
         if lf:
             lf.update_current_generation(
-                output={"answer": answer},
-                model=CLAUDE_MODEL,
+                output={"answer": result.answer},
+                model=result.model,
                 usage_details={
-                    "input":          usage.input_tokens,
-                    "output":         usage.output_tokens,
-                    "cache_creation": cache_created,
-                    "cache_read":     cache_read,
+                    "input":          result.input_tokens,
+                    "output":         result.output_tokens,
+                    "cache_creation": result.cache_creation_tokens,
+                    "cache_read":     result.cache_read_tokens,
                 },
             )
 
     return {
         **state,
-        "answer": answer,
+        "answer": result.answer,
         "usage": {
-            "input_tokens":           usage.input_tokens,
-            "output_tokens":          usage.output_tokens,
-            "cache_creation_tokens":  cache_created,
-            "cache_read_tokens":      cache_read,
+            "input_tokens":           result.input_tokens,
+            "output_tokens":          result.output_tokens,
+            "cache_creation_tokens":  result.cache_creation_tokens,
+            "cache_read_tokens":      result.cache_read_tokens,
+            "cost_usd":               result.cost_usd,
+            "generation_provider":    result.provider,
+            "generation_model":       result.model,
         },
     }
 
@@ -350,6 +343,9 @@ def run_query(query: str) -> dict:
             "output_tokens":          int,
             "cache_creation_tokens":  int,
             "cache_read_tokens":      int,
+            "cost_usd":               float,       # generation cost only
+            "generation_provider":    str,         # "anthropic" | "openai" | "google"
+            "generation_model":       str,         # exact model string
             "reranker_cost_usd":      float,       # 0.0 if RERANKER_BACKEND="none" or "cross_encoder"
             "reranked":               bool,        # False if RERANKER_BACKEND="none"
         }
@@ -390,6 +386,9 @@ def run_query(query: str) -> dict:
         "output_tokens":          usage.get("output_tokens", 0),
         "cache_creation_tokens":  usage.get("cache_creation_tokens", 0),
         "cache_read_tokens":      usage.get("cache_read_tokens", 0),
+        "cost_usd":               usage.get("cost_usd", 0.0),
+        "generation_provider":    usage.get("generation_provider", GENERATION_PROVIDER),
+        "generation_model":       usage.get("generation_model", ""),
         "reranker_cost_usd":      final.get("reranker_cost_usd") or 0.0,
         "reranked":               final.get("reranked") or False,
     }

@@ -21,12 +21,6 @@ from pathlib import Path
 
 import anthropic
 
-# ── Pricing constants — Sonnet 4.6 ───────────────────────────────────────────
-
-_INPUT_PER_M   = 3.00    # $/M input tokens (cache miss)
-_OUTPUT_PER_M  = 15.00   # $/M output tokens
-_READ_PER_M    = 0.30    # $/M cache-read tokens (cache hit)
-
 EVAL_SET_PATH    = Path("data/eval_set.jsonl")
 DEFAULT_OUT_PATH = Path("data/eval_results.jsonl")
 
@@ -57,24 +51,6 @@ def _resolve_category(raw: str) -> str:
         )
     return resolved
 
-
-def _compute_cost(
-    input_tokens: int,
-    output_tokens: int,
-    cache_creation_tokens: int,
-    cache_read_tokens: int,
-) -> float:
-    """
-    cache hit  (cache_read_tokens > 0):
-        (cache_read_tokens * READ_PER_M + output_tokens * OUTPUT_PER_M) / 1_000_000
-    cache miss (cache_read_tokens == 0):
-        (input_tokens * INPUT_PER_M + output_tokens * OUTPUT_PER_M) / 1_000_000
-
-    cache_creation_tokens is not in the user-specified formula — excluded.
-    """
-    if cache_read_tokens > 0:
-        return (cache_read_tokens * _READ_PER_M + output_tokens * _OUTPUT_PER_M) / 1_000_000
-    return (input_tokens * _INPUT_PER_M + output_tokens * _OUTPUT_PER_M) / 1_000_000
 
 
 def _load_questions(
@@ -132,7 +108,8 @@ _529_WAITS = [5, 10, 20]  # seconds; fail loud after 3 retries (4th attempt)
 
 def _run_with_529_retry(run_query, question: str) -> dict:
     """
-    Call run_query(question), retrying up to 3 times on Anthropic 529 overloaded.
+    Call run_query(question), retrying up to 3 times on transient overload errors.
+    Handles Anthropic 529, OpenAI 529/503, and generic rate-limit exceptions.
     Waits: 5s, 10s, 20s. Any other exception propagates immediately.
     """
     for attempt, wait in enumerate(_529_WAITS, start=1):
@@ -141,7 +118,16 @@ def _run_with_529_retry(run_query, question: str) -> dict:
         except anthropic.APIStatusError as exc:
             if exc.status_code != 529:
                 raise
-            print(f"  529 overloaded -- retry {attempt}/3 in {wait}s")
+            print(f"  529 overloaded (anthropic) -- retry {attempt}/3 in {wait}s")
+            time.sleep(wait)
+        except Exception as exc:
+            # Retry on OpenAI RateLimitError / ServiceUnavailableError and
+            # google.genai ServerError (503) by checking the class name —
+            # avoids hard importing each SDK's error hierarchy.
+            cls = type(exc).__name__
+            if cls not in ("RateLimitError", "ServiceUnavailableError", "ServerError"):
+                raise
+            print(f"  transient error ({cls}) -- retry {attempt}/3 in {wait}s")
             time.sleep(wait)
     # Final attempt — let any exception propagate
     return run_query(question)
@@ -208,14 +194,14 @@ def run(
             cache_cre  = result["cache_creation_tokens"]
             inp        = result["input_tokens"]
             out_tok    = result["output_tokens"]
-
-            cost = _compute_cost(inp, out_tok, cache_cre, cache_read)
+            cost       = result["cost_usd"]   # computed per-provider in generation.py
 
             chunks_out = [
                 {
                     "source_file":   c["source_file"],
                     "score":         round(c["score"], 4),
                     "chunk_index":   i,
+                    "text":          c.get("text", ""),   # required for judge faithfulness eval
                     **({"reranker_score": round(c["reranker_score"], 4)} if "reranker_score" in c else {}),
                     **({"dense_score":    round(c["dense_score"],    4)} if "dense_score"    in c else {}),
                 }
@@ -231,6 +217,8 @@ def run(
                 "precision_at_5":        None,
                 "faithfulness":          None,
                 "latency_ms":            latency_ms,
+                "generation_provider":   result.get("generation_provider", "anthropic"),
+                "generation_model":      result.get("generation_model", ""),
                 "cache_creation_tokens": cache_cre,
                 "cache_read_tokens":     cache_read,
                 "input_tokens":          inp,
