@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+import anthropic
+
 # ── Pricing constants — Sonnet 4.6 ───────────────────────────────────────────
 
 _INPUT_PER_M   = 3.00    # $/M input tokens (cache miss)
@@ -122,6 +124,26 @@ def _print_summary(results: list[dict]) -> None:
     print(f"{'TOTAL':<20} {len(results):>5}  {overall_mean:>13.0f}  {total_cost:>10.5f}")
 
 
+_529_WAITS = [5, 10, 20]  # seconds; fail loud after 3 retries (4th attempt)
+
+
+def _run_with_529_retry(run_query, question: str) -> dict:
+    """
+    Call run_query(question), retrying up to 3 times on Anthropic 529 overloaded.
+    Waits: 5s, 10s, 20s. Any other exception propagates immediately.
+    """
+    for attempt, wait in enumerate(_529_WAITS, start=1):
+        try:
+            return run_query(question)
+        except anthropic.APIStatusError as exc:
+            if exc.status_code != 529:
+                raise
+            print(f"  529 overloaded -- retry {attempt}/3 in {wait}s")
+            time.sleep(wait)
+    # Final attempt — let any exception propagate
+    return run_query(question)
+
+
 def run(
     category: str | None = None,
     limit:    int | None  = None,
@@ -141,7 +163,7 @@ def run(
     with output.open("w", encoding="utf-8") as out_f:
         for q in questions:
             t0 = time.perf_counter()
-            result = run_query(q["question"])
+            result = _run_with_529_retry(run_query, q["question"])
             latency_ms = round((time.perf_counter() - t0) * 1000)
 
             cache_read = result["cache_read_tokens"]
