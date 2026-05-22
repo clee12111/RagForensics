@@ -185,3 +185,29 @@
 - Manual faithfulness scoring (5-point scale) across all 150 results — start with out_of_scope and cross_reference as the highest-signal categories
 - precision@5 scoring: for each question, mark which of the 5 retrieved chunks were actually relevant
 - First failure mode candidates will emerge from scoring
+
+## 2026-05-22 — Automated scoring and baseline faithfulness measurements
+
+**Worked on:** LLM-as-judge scoring module built and run across all 150 eval questions. First quantitative baseline established.
+
+**Decisions:**
+- Gemini 2.5 Flash as default judge — cheapest capable API judge, avoids circular judgment (Sonnet judges Sonnet outputs)
+- Flag-instead-of-auto-call for ambiguous scores (2-3) — manual review queue rather than automatic Sonnet spend; flag rate is itself a metric
+- Sonnet 4.6 retained as calibration judge for manual review of flagged records, not automated
+- Provider-agnostic judge interface — swapping judge model is a config change, not a code change
+
+**Measurements:**
+- Total judge cost: $0.0019 for 150 questions (~$0.013/question generation vs $0.00001/question judge — judge is 1000x cheaper than generation)
+- Per-category mean faithfulness: conceptual 4.40, cross_reference 3.90, edge_case 4.17, out_of_scope 4.83, syntactic 4.77, overall 4.41
+- Flagged ambiguous (score 2-3): 22 total — cross_reference 7, edge_case 7, conceptual 5, syntactic 3, out_of_scope 0
+- cross_reference and edge_case account for 64% of flags despite being 40% of questions
+- out_of_scope: 0 flags, 4.83 mean — clean refusals, no hallucination under pressure detected at this stage
+
+**What surprised me:**
+- out_of_scope scoring highest (4.83) rather than lowest — the system refuses cleanly rather than hallucinating features FastAPI doesn't have
+- Flag concentration: 14 of 22 flags in cross_reference and edge_case confirms dense-only retrieval struggles on multi-document synthesis and version-specific edge cases specifically
+
+**Next:**
+- Read all 22 flagged records manually, starting with cross_reference (7 flags, lowest mean) — identify specific failure mechanism per record
+- First failure mode candidate: cross_reference retrieval failure (dense-only single-chunk retrieval insufficient for multi-document synthesis questions)
+- Commit eval results analysis before starting Phase 3 investigation
