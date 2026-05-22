@@ -409,6 +409,13 @@ def trace_query(trace_id: str) -> str:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import uvicorn
+    import os
 
-    uvicorn.run(asgi_app, host="127.0.0.1", port=_PORT)
+    transport = os.getenv("MCP_TRANSPORT", "http")
+    if transport == "stdio":
+        # stdio: launched as a subprocess by Claude Desktop — no network, no auth needed
+        mcp.run(transport="stdio")
+    else:
+        import uvicorn
+
+        uvicorn.run(asgi_app, host="127.0.0.1", port=_PORT)
