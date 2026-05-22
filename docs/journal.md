@@ -1,5 +1,28 @@
 # Engineering Journal
 
+## 2026-05-22 — Full optimized-stack run (3x): aggregate validation
+
+**Worked on:** Ran optimized stack (hybrid + few-shot prompt) 3x for variance; aggregated against re-scored baseline on faithfulness and precision@5.
+
+**Decisions:**
+- 3 runs for the headline before/after to separate real deltas from sample noise (regression-layer discipline from PLAN.md); 1 run insufficient for small category deltas
+- Baseline re-scored with the precision@5-extended judge so before/after use the identical judge (faithfulness recalibrated 4.41→4.57; all comparisons use the new judge for both arms)
+- out_of_scope precision@5 drop documented as a characteristic, not a bug — no fix built; relevance-threshold gate noted as future direction
+
+**Measurements:**
+- Faithfulness: 4.57 → 4.82 total (+0.25), all category deltas real (above run-to-run spread, max spread 0.13). edge_case +0.48 largest, conceptual +0.31
+- faith=0: 4 → 0 across all 3 runs — FM-1 confident fabrication eliminated
+- Flagged (2-3): 7 → 9-12 — fabrications converted to honest partials (improvement)
+- Precision@5: mostly flat; syntactic +0.07 (real, BM25 helps keyword queries), out_of_scope -0.19 (real, BM25 noise on unanswerable questions, absorbed by grounding prompt)
+- Run-to-run faithfulness spread max 0.13; precision@5 spread near-zero (retrieval deterministic) — confirms metric cleanliness
+
+**What surprised me:**
+- out_of_scope: precision@5 dropped 0.19 while faithfulness rose to 4.99. The grounding prompt makes the model robust to noisier retrieval. The two metrics in opposition revealed a retrieval degradation a single metric would have hidden.
+- The aggregate improvement is generation-led (grounding prompt), not retrieval-led — precision@5 stayed flat while faithfulness rose broadly.
+
+**Next:**
+- Cross-provider study: build provider-agnostic generation (GENERATION_PROVIDER flag), run optimized stack on GPT-5.5 and Gemini 3.1 Pro, compare faithfulness by category (retrieval held constant, so precision@5 identical across providers)
+
 ## 2026-05-19 — Repo scaffolding and initial documentation
 
 **Worked on:** repo scaffolding and initial documentation

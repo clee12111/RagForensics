@@ -35,6 +35,63 @@ Where each failure originates in the pipeline and what the fix surface is:
 
 ---
 
+## Optimized Stack Results (vs baseline)
+
+Optimized stack: hybrid retrieval (BM25 + dense, RRF) + few-shot grounding prompt,
+Sonnet 4.6 generation. Baseline: dense-only + short prompt. Both scored by the
+identical Gemini 2.5 Flash judge (faithfulness + precision@5). Optimized run 3x
+for run-to-run variance; a delta is "real" only if it exceeds the spread.
+
+Faithfulness (all deltas real, above spread):
+| Category | Baseline | Optimized | Delta |
+|---|---|---|---|
+| conceptual | 4.33 | 4.64 | +0.31 |
+| syntactic | 4.77 | 4.90 | +0.13 |
+| cross_reference | 4.60 | 4.74 | +0.14 |
+| edge_case | 4.33 | 4.81 | +0.48 |
+| out_of_scope | 4.83 | 4.99 | +0.16 |
+| TOTAL | 4.57 | 4.82 | +0.25 |
+
+faith=0 (confident fabrication): 4 → 0 across all three runs. The FM-1 failure
+mode is eliminated in aggregate.
+
+Flagged ambiguous (faith 2-3): 7 → 9-12. This is improvement, not regression:
+faith=0 fabrications converted into faith 2-3 honest partials. The bottom of the
+distribution lifted — a flagged partial answer is strictly better than a confident
+hallucination.
+
+Precision@5 (retrieval quality, mostly stable — retrieval is deterministic so
+run spread is near-zero):
+| Category | Baseline | Optimized | Delta | Real? |
+|---|---|---|---|---|
+| conceptual | 0.60 | 0.59 | -0.01 | noise |
+| syntactic | 0.58 | 0.65 | +0.07 | yes |
+| cross_reference | 0.59 | 0.58 | -0.01 | noise |
+| edge_case | 0.47 | 0.46 | -0.00 | noise |
+| out_of_scope | 0.34 | 0.15 | -0.19 | yes |
+
+Two precision@5 findings:
+- syntactic +0.07: hybrid retrieval's BM25 component helps keyword-heavy
+  syntactic queries find exact-term chunks. Retrieval genuinely improved here.
+- out_of_scope -0.19: hybrid retrieves MORE keyword-matched-but-irrelevant
+  chunks on unanswerable questions (BM25 matches keywords in queries about
+  nonexistent features). Yet faithfulness on out_of_scope ROSE to 4.99 — the
+  grounding prompt makes the model refuse cleanly despite the noisier context.
+  Lower retrieval precision, higher answer quality: the two metrics together
+  reveal what neither shows alone. This is the diagnostic value of precision@5 —
+  it caught a retrieval degradation hidden behind a rising faithfulness score.
+  Implication (documented, not built): a relevance-threshold gate would prevent
+  low-relevance chunks reaching generation on out-of-scope queries.
+
+Mechanism attribution: faithfulness rose broadly while precision@5 stayed
+roughly flat (except the two noted). This means the faithfulness gains came
+primarily from the few-shot grounding prompt (generation-side), not from
+retrieval relevance changes — consistent with the per-failure-mode findings
+where grounding fixed FM-2/FM-3 and hybrid fixed FM-1's retrieval misses
+specifically. The aggregate improvement is generation-led, retrieval-assisted.
+
+---
+
 ## FM-1: Retrieval Miss → Confident Fabrication
 
 ### Symptom
