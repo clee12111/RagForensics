@@ -111,7 +111,7 @@ Run these checks before every commit. Refuse to commit if any fail.
 
 ### Pre-commit
 
-1. **No secrets in staged files.** Grep for `sk-`, `pk-`, `Bearer `, `password`, `secret`. Stop if anything matches.
+1. **No secrets in staged files.** Grep staged files for actual key values using: `sk-[A-Za-z0-9]{10,}`, `pk-[A-Za-z0-9]{10,}`, `Bearer [A-Za-z0-9]{10,}`. Variable names that reference env vars (`LANGFUSE_SECRET_KEY`, etc.) are not matches. Stop only if an actual key value is present.
 2. **No large data files.** Anything over 1MB in `data/corpus/` should be gitignored.
 3. **No personal context in committed files.** No mention of target firms, application strategy, or other private content.
 4. **No half-finished journal entries.** If `docs/journal.md` was modified, the latest entry must have all 5 fields filled in.
