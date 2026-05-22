@@ -20,11 +20,28 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
+
+_503_WAITS = [30, 60, 120]  # seconds; fail loud after 3 retries
+
+
+def _score_with_retry(judge, question: str, chunks: list, answer: str):
+    """Retry Gemini 503 UNAVAILABLE up to 3 times. All other errors propagate."""
+    from google.genai.errors import ServerError  # type: ignore
+    for attempt, wait in enumerate(_503_WAITS, start=1):
+        try:
+            return judge.score(question, chunks, answer)
+        except ServerError as exc:
+            if exc.args[0] != 503:
+                raise
+            print(f"  503 unavailable -- retry {attempt}/3 in {wait}s")
+            time.sleep(wait)
+    return judge.score(question, chunks, answer)  # final attempt, fail loud
 
 RESULTS_PATH = Path("data/eval_results.jsonl")
 
@@ -111,7 +128,7 @@ def run(limit: int | None = None) -> None:
         r = records[rec_idx]
 
         # ── Primary: Gemini ───────────────────────────────────────────────────
-        g_result = gemini_judge.score(r["question"], r["chunks"], r["answer"])
+        g_result = _score_with_retry(gemini_judge, r["question"], r["chunks"], r["answer"])
         record_cost = g_result.cost_usd
 
         faith     = g_result.faithfulness

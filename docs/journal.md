@@ -211,3 +211,26 @@
 - Read all 22 flagged records manually, starting with cross_reference (7 flags, lowest mean) — identify specific failure mechanism per record
 - First failure mode candidate: cross_reference retrieval failure (dense-only single-chunk retrieval insufficient for multi-document synthesis questions)
 - Commit eval results analysis before starting Phase 3 investigation
+
+## 2026-05-21 — Failure mode documentation from baseline eval
+
+**Worked on:** Classified all 27 below-threshold eval records (5 faith=0, 22 flagged_ambiguous) into four failure modes; populated docs/failure_modes.md with full 5-section entries.
+
+**Decisions:**
+- Four failure modes documented, not three — the faith=2 records split cleanly into two distinct mechanisms (knowledge injection vs. factual contradiction), warranting separate entries
+- Failure modes ordered by severity: FM-1 (confident hallucination) → FM-2 (injection) → FM-3 (contradiction) → FM-4 (synthesis gap)
+- Mitigations listed as candidates with expected impact, none marked as implemented — no measurements yet
+
+**Measurements:**
+- FM-1 (confident hallucination, faith=0): 5 records, 3.3% overall, 10% in cross_reference
+- FM-2 (knowledge injection, faith=2): 5 records, 3.3% overall, 10% in cross_reference and edge_case each
+- FM-3 (factual contradiction, faith=2): 3 records, 2.0% overall
+- FM-4 (synthesis gap, faith=3): 14 records, 9.3% overall; cross_reference 16.7%, edge_case 16.7%
+- Cross_reference mean 3.90 vs. out_of_scope 4.83 — 0.93-point gap driven primarily by FM-4
+
+**What surprised me:**
+- FM-3 (contradiction) exists as a distinct failure mode from FM-2 (injection): in 3 cases the model didn't add knowledge, it inverted what the chunk actually said. Parametric prior overriding in-context evidence is a different mechanism than supplementing incomplete context.
+- FM-4 accounts for the majority of below-threshold records by count (14/27) but is structurally unmitigation-able through retrieval quality alone — the documentation corpus does not contain integration-pattern content, so better retrieval over the same corpus cannot fix it.
+
+**Next:**
+- Implement Haiku reranking (queued in build order) — first mitigation candidate for FM-4; measure cross_reference category delta before/after
