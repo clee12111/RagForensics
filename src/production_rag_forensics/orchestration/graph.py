@@ -45,11 +45,12 @@ _anthropic = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 EMBED_MODEL        = "text-embedding-3-small"
 CLAUDE_MODEL       = "claude-sonnet-4-6"
 TOP_K              = 5
-RERANKER_BACKEND   = "none"            # "cross_encoder" | "haiku" | "none"
+RERANKER_BACKEND   = "hybrid"          # "hybrid" | "none" | "cross_encoder" | "haiku"
 _FETCH_K: dict[str, int] = {
     "cross_encoder": 50,   # batched pass is cheap — wider candidate pool
     "haiku":         20,   # 20 sequential API calls per query
     "none":           5,   # dense top-5 directly
+    "hybrid":         20,  # dense_n for Pinecone; BM25 runs over all 584 locally
 }
 
 # System prompt as a structured block with cache_control.
@@ -190,43 +191,57 @@ def embed_query(state: RAGState) -> RAGState:
 
 def retrieve(state: RAGState) -> RAGState:
     """
-    Dense retrieval from Pinecone, optionally followed by reranking.
+    Dense retrieval from Pinecone, optionally followed by reranking or hybrid fusion.
 
-    RERANKER_BACKEND="none":         fetch top_k=5, return directly.
-    RERANKER_BACKEND="haiku":        fetch top_k=20, rerank via Haiku 4.5 (20 API calls).
+    RERANKER_BACKEND="none":          fetch top_k=5, return directly.
+    RERANKER_BACKEND="hybrid":        BM25 + dense, RRF-merged top_k=5 (no API cost).
+    RERANKER_BACKEND="haiku":         fetch top_k=20, rerank via Haiku 4.5 (20 API calls).
     RERANKER_BACKEND="cross_encoder": fetch top_k=50, rerank via cross-encoder (1 batched pass).
     """
     lf = get_client()
-    vec = state["query_embedding"]
+    vec  = state["query_embedding"]
+    query_text = state["query"]
     fetch_k = _FETCH_K[RERANKER_BACKEND]
 
     with langfuse_span(lf, name="retrieve", obs_type="retriever",
                        input={"fetch_k": fetch_k, "backend": RERANKER_BACKEND,
                               "index": "fastapi-docs-v1"}):
-        result = _index.query(vector=vec, top_k=fetch_k, include_metadata=True)
-
-        chunks = [
-            {
-                "text":        match.metadata.get("text", ""),
-                "source_file": match.metadata.get("source_file", ""),
-                "header_path": match.metadata.get("header_path", ""),
-                "score":       match.score,
-            }
-            for match in result.matches
-        ]
 
         reranker_cost = 0.0
 
-        if RERANKER_BACKEND == "haiku":
-            from production_rag_forensics.retrieval.reranker import Reranker
-            reranker = Reranker()
-            chunks = reranker.rerank(state["query"], chunks, top_k=TOP_K)
-            reranker_cost = chunks[0].pop("rerank_cost_usd", 0.0) if chunks else 0.0
+        if RERANKER_BACKEND == "hybrid":
+            from production_rag_forensics.retrieval.hybrid_search import get_hybrid_search
+            chunks = get_hybrid_search(_index).search(
+                query=query_text,
+                query_embedding=vec,
+                top_k=TOP_K,
+                dense_n=20,
+                sparse_n=20,
+            )
 
-        elif RERANKER_BACKEND == "cross_encoder":
-            from production_rag_forensics.retrieval.cross_encoder_reranker import get_reranker
-            chunks = get_reranker().rerank(state["query"], chunks, top_k=TOP_K)
-            # cross-encoder has no API cost
+        else:
+            result = _index.query(vector=vec, top_k=fetch_k, include_metadata=True)
+
+            chunks = [
+                {
+                    "text":        match.metadata.get("text", ""),
+                    "source_file": match.metadata.get("source_file", ""),
+                    "header_path": match.metadata.get("header_path", ""),
+                    "score":       match.score,
+                }
+                for match in result.matches
+            ]
+
+            if RERANKER_BACKEND == "haiku":
+                from production_rag_forensics.retrieval.reranker import Reranker
+                reranker = Reranker()
+                chunks = reranker.rerank(query_text, chunks, top_k=TOP_K)
+                reranker_cost = chunks[0].pop("rerank_cost_usd", 0.0) if chunks else 0.0
+
+            elif RERANKER_BACKEND == "cross_encoder":
+                from production_rag_forensics.retrieval.cross_encoder_reranker import get_reranker
+                chunks = get_reranker().rerank(query_text, chunks, top_k=TOP_K)
+                # cross-encoder has no API cost
 
         if lf:
             def _top_score(c: dict) -> float:

@@ -398,3 +398,33 @@ captured first per-stage latency and cost breakdown from real traces.
   capturing all traces
 - Then cross-provider study — generation-stage comparison, since generate is
   91% of latency and 100% of per-query cost
+
+## 2026-05-22 — Hybrid retrieval (BM25+dense RRF): FM-1 mitigation
+
+**Worked on:** Built hybrid search (BM25 sparse + dense, RRF-merged); tested
+FM-1 mitigation on the 5 faith=0 retrieval-miss records.
+
+**Decisions:**
+- Hybrid retrieval (BM25 + dense, RRF k=60) adopted as optimized-stack default —
+  recovers keyword-exact misses dense cannot. In scope per locked stack table;
+  distinct from rejected reranking (fusion of two retrievers, not re-scoring).
+- BM25 via rank_bm25 (BM25Okapi), index built once per process over 584 chunks
+- Tested against original dense baseline (bundled with few-shot prompt) —
+  per-change isolation deferred unless result was murky; it was clean
+
+**Measurements:**
+- 5/5 FM-1 records improved, 0 regressions, 3 resolved to faith=5
+- c3_12 (sharpest FM-1): 0→5, BM25 surfaced OAuth2 docs dense missed entirely
+- c3_24, c4_29: 0→3 — FM-1 fixed, FM-4 revealed underneath (stacked failures)
+- Latency: hybrid adds no measurable overhead (BM25 local over 584 chunks);
+  wall-clock stays generation-bound ~11-12s
+
+**What surprised me:**
+- Fixing FM-1 on c3_24/c4_29 exposed FM-4 beneath it — the faith=0 was masking
+  a synthesis gap. Retrieval-miss and synthesis-gap can stack on one question;
+  the retrieval fix surfaces the deeper corpus problem rather than resolving it.
+
+**Next:**
+- Full optimized-stack run: 150 questions, hybrid + few-shot prompt, Langfuse
+  capturing all traces — the "after" measurement vs original baseline (4.41)
+- Then cross-provider study: same stack, swap Sonnet → GPT-5.5, Gemini 3.1 Pro

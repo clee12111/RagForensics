@@ -22,6 +22,7 @@ dependencies = [
     "openai",
     "google-genai",
     "sentence-transformers",
+    "rank-bm25",
 ]
 
 [project.optional-dependencies]

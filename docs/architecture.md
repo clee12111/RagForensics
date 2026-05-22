@@ -9,7 +9,7 @@
 | Observability | Langfuse (self-hosted via Docker) | Open-source, transferable signal. Production-grade tracing without locking to a framework vendor. |
 | Inference (primary) | Claude Sonnet 4.6 | With prompt caching enabled. Best-value flagship. |
 | Inference (comparison) | GPT-5.4, Gemini 3.1 Pro | Cross-provider measurement is part of the analytical core. |
-| Reranking tier | None (dense-only, locked 2026-05-22) | Both Haiku LLM and cross-encoder rerankers measured neutral-to-negative on cross_reference. Dense-only wins. Reranker code retained. |
+| Retrieval | Hybrid: BM25 sparse + Pinecone dense, RRF-merged (k=60) (locked 2026-05-22) | Dense-only misses keyword-exact terms outside cosine neighborhood. BM25 recovers FM-1 retrieval misses. 5/5 FM-1 records improved. Reranking removed (neutral-to-negative on cross_reference). |
 | Service layer | FastAPI | Production interface, also dogfooding the corpus. |
 | Agent interface | Custom MCP server (Streamable HTTP) | Exposes journal/failure-mode/cost as agent-queryable tools. |
 | Corpus | FastAPI documentation (English, release 0.136.1, 150 files, include-directives resolved to inline example code) | Heterogeneous structure (prose, code, API refs, tutorials). Verifiable without domain ramp-up. |
@@ -31,11 +31,13 @@ FastAPI docs (cloned repo, pinned commit)
 User query
   → FastAPI service layer
     → LangGraph agent loop
-      → Pinecone hybrid retrieval (sparse + dense)
-          → Claude Sonnet 4.6 generation (+ GPT-5.4, Gemini 3.1 Pro for comparison)
+      → embed_query: OpenAI text-embedding-3-small → 1536-dim vector
+        → retrieve: BM25 (rank_bm25, 584-chunk index) + Pinecone dense (top-20 each)
+                    → RRF fusion (k=60) → top-5 chunks
+          → generate: Claude Sonnet 4.6 + few-shot grounding prompt (cached, ~1,408 tok)
             → Response
                 │
-                └── Langfuse tracing across all stages
+                └── Langfuse tracing across all stages (cloud, US region)
 ```
 
 ## Rejected alternatives
@@ -60,6 +62,6 @@ User query
 
 - **Code-specialized embedding:** text-embedding-3-small is the locked choice; a code-specialist model (e.g. voyage-code-3) is a held upgrade if syntactic eval category underperforms in Phase 2 baseline.
 - **Reranking threshold:** At what reranker score should retrieved chunks be filtered out? Requires baseline eval data to set empirically.
-- **Hybrid search weighting:** Sparse/dense balance for Reciprocal Rank Fusion (RRF). The right alpha depends on query category distribution and needs per-category measurement to tune.
+- **Hybrid search weighting:** RESOLVED (2026-05-22): Hybrid (BM25 + dense, RRF k=60) adopted. Recovers FM-1 retrieval misses that dense-only cannot (keyword-exact terms outside dense top-N). Standard RRF, no learned weighting. Measured 5/5 FM-1 records improved. Reveals (does not create) underlying FM-4 on questions with stacked failures.
 - **Reranker model choice.** RESOLVED (2026-05-22): Moot. Both Haiku LLM reranker and cross-encoder (ms-marco-MiniLM-L-6-v2) are neutral-to-negative on cross_reference (mean faithfulness 3.87 and 3.70 respectively vs. dense-only 3.90). Neither earns its place. Pipeline default is dense-only retrieval. Reranker code retained for future experiments.
 - **Does reranking earn its place at all?** RESOLVED (2026-05-22): No. Dense-only retrieval wins on cross_reference (mean faithfulness 3.90 vs. 3.87 Haiku, 3.70 cross-encoder). The binding constraint is corpus structure (knowledge fragmentation), not retrieval signal quality. Reranking cannot surface integration content that does not exist as a retrievable unit.

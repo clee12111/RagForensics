@@ -81,23 +81,48 @@ context does not contain enough information."
 
 ### Mitigation
 
-Not yet mitigated. Mitigation candidates ranked by likely impact:
+Mitigated via hybrid retrieval (BM25 sparse + dense, RRF-merged, k=60), combined
+with the few-shot grounding prompt. BM25 keyword matching surfaces documents containing
+exact query terms that dense cosine similarity misses when the embedding neighborhood
+is topically adjacent but lexically wrong.
+
+Measured on all 5 FM-1 faith=0 records (original dense baseline → hybrid + few-shot):
+
+| ID    | Baseline | Hybrid+FS | Delta | Mechanism |
+|-------|---------|-----------|-------|-----------|
+| c3_12 | 0       | 5         | +5    | BM25 on "oauth2passwordbearer"/"tokenurl" surfaced security/first-steps.md, oauth2-scopes.md; dense returned path-params chunks |
+| c3_20 | 0       | 5         | +5    | handling-errors.md, response-model.md recovered |
+| c5_11 | 0       | 5         | +5    | templates.md surfaced; clean out-of-scope refusal from grounding prompt |
+| c3_24 | 0       | 3         | +3    | sub-dependencies chunks retrieved; still flagged — synthesis gap exposed |
+| c4_29 | 0       | 3         | +3    | handling-errors.md retrieved; still flagged — synthesis gap exposed |
+
+5 of 5 improved, 0 regressions, 3 fully resolved to faith=5.
+
+**Key finding — stacked failure modes:** c3_24 and c4_29 went 0→3, not 0→5. Their
+faith=0 was FM-1 (wrong chunks → fabrication). Hybrid fixed the retrieval miss — the
+correct chunks now return — but exposed FM-4 underneath: once the right chunks are
+retrieved, the questions still require multi-chunk synthesis that no single chunk
+contains. Hybrid retrieval does not create FM-4; it reveals FM-4 that was previously
+masked by FM-1. A retrieval-miss fabrication and a synthesis gap can coexist on the
+same question; fixing the first surfaces the second.
+
+Bundled-change caveat: this compares hybrid+few-shot against the original dense
+baseline, so deltas include both the grounding prompt (abstention may lift some
+faith=0 via refusal-instead-of-fabrication) and hybrid retrieval. Per-record
+attribution between the two was not isolated. The claim is that the combined
+optimized stack resolved all 5 FM-1 records.
+
+BM25 noise note: on simple queries dense already handles well (e.g. "path parameters"),
+BM25 can surface term-frequency noise (dependencies/index.md matched on "parameters").
+RRF fusion dampens this — dense's correct chunks still rank high — but it is a watch
+item for the full-corpus run.
+
+Remaining unmeasured candidates:
 
 1. **Relevance threshold**: If max(chunk_scores) < threshold T, route to abstention path
-   rather than generation. Requires calibrating T against the score distribution — the 5
-   faith=0 records had top-1 scores of 0.48–0.55, indistinguishable from correct-retrieval
-   scores by score alone.
-
-2. **Abstention instruction in system prompt**: Add explicit instruction to say "the
-   provided context does not contain enough information to answer this question" when chunks
-   do not address the question. Tests whether generation-side instruction alone reduces
-   hallucination rate without retrieval changes.
-
-3. **Hybrid retrieval (sparse + dense)**: BM25 keyword match + dense cosine. A query
-   for "OAuth2PasswordBearer + tokenUrl" would keyword-match the OAuth2 docs directly;
-   dense-only returns path-params.md because the embedding is semantically adjacent.
-
-None of these have been measured yet.
+   rather than generation. The 5 faith=0 records had top-1 scores of 0.48–0.55,
+   indistinguishable from correct-retrieval scores by score alone — harder to calibrate
+   than the hybrid fix.
 
 ### Generalization
 
