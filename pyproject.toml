@@ -18,6 +18,8 @@ dependencies = [
     "python-dotenv",
     "pydantic",
     "tiktoken",
+    "tenacity",
+    "openai",
 ]
 
 [project.optional-dependencies]
