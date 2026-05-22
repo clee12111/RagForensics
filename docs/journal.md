@@ -143,6 +143,7 @@
 - cache_control on system prompt only; retrieved chunks excluded from cache — chunks rotate per query, caching them would thrash the cache and increase cost
 - Committed before Langfuse traces confirmed — observability wire-up is not a correctness gate; code correctness verified independently
 - Tightened pre-commit secret scan to pattern-match actual key values (sk-/pk-/Bearer + 10-char gate); dropped bare "secret"/"password" matches that flagged env var names as false positives
+- Eval question generation methodology: GPT-4o drafted category constraints, Gemini drafted 150 candidate questions from those constraints — no Anthropic model in the generation chain, eliminating contamination from the primary inference model. Questions curated by Cody for quality, not domain expertise. Deviation from PLAN.md hand-written rule documented here: the original constraint assumed corpus domain familiarity; substituting model-generation with human curation of output achieves the same contamination guarantee without requiring FastAPI expertise.
 
 **Measurements:**
 - Smoke test: "How do I declare path parameters in FastAPI?"
