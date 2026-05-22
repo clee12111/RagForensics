@@ -9,7 +9,33 @@ Overall: mean faithfulness 4.41. Flagged ambiguous: 22 (14.7%). Faith=0: 5 (3.3%
 
 ---
 
-## FM-1: Confident Hallucination on Complete Retrieval Miss
+## Failure Mode Diagnostic Map
+
+Where each failure originates in the pipeline and what the fix surface is:
+
+| FM  | Name                                    | Retrieval result        | Generation behavior                        | Fix surface        |
+|-----|-----------------------------------------|-------------------------|--------------------------------------------|--------------------|
+| FM-1 | Retrieval Miss → Confident Fabrication | Complete miss — wrong chunks returned | Model fills vacuum with fabricated detail. No uncertainty expressed. | Retrieval (hybrid search, relevance threshold) |
+| FM-2 | Parametric Knowledge Leakage           | Partial hit — relevant but incomplete chunks | Model correctly uses chunks then adds content from training knowledge not present in any chunk. Grounded and injected content appear in the same answer. | Generation (anti-injection prompt instruction) |
+| FM-3 | Factual Contradiction                  | Full hit — correct chunks returned | Model contradicts what the chunk explicitly states. Parametric prior overrides in-context evidence. | Generation (re-read / quote-before-claim instruction) |
+| FM-4 | Multi-Document Synthesis Gap           | Partial hit — correct individual chunks, missing integration | Model correctly describes each component but cannot explain how they interact because no chunk contains the integration. | Retrieval + Corpus (reranking where integration chunk exists but ranks low; corpus augmentation where it doesn't exist at all) |
+
+**Reading this table:**
+- FM-1 and FM-4 are primarily retrieval failures. Better retrieval directly attacks the root cause.
+- FM-2 and FM-3 are primarily generation failures. Better prompting directly attacks the root cause.
+- FM-4 has a hard limit: reranking can only promote chunks that exist. If the integration 
+  document was never written, no retrieval improvement can surface it.
+- FM-1 is named "confident fabrication" not "hallucination" because the failure mechanism 
+  is retrieval returning wrong chunks — the model filling the vacuum is the symptom, not 
+  the cause. Hallucination implies the model invented spontaneously; here retrieval created 
+  the condition for fabrication.
+- FM-2 is named "parametric knowledge leakage" not "hallucination" because retrieval 
+  partially worked — the model is supplementing real retrieved content with training 
+  knowledge, not inventing from nothing.
+
+---
+
+## FM-1: Retrieval Miss → Confident Fabrication
 
 ### Symptom
 
@@ -85,7 +111,7 @@ abstention signal or retrieval quality gate will exhibit this failure at some no
 
 ---
 
-## FM-2: Knowledge Injection on Partial Context
+## FM-2: Parametric Knowledge Leakage on Partial Retrieval
 
 ### Symptom
 
