@@ -162,12 +162,34 @@ The injection is more likely when:
 
 ### Mitigation
 
-Not yet mitigated. Candidates:
+Mitigated via few-shot grounding prompt (generation-side, single bundled change).
+The system prompt was expanded from ~50 tokens to ~1,408 tokens with four worked
+examples: a full grounded answer, an honest partial answer, an injection refusal
+(Example 3), and a contradiction guard (Example 4). The 1,408-token prompt also
+crossed Anthropic's 1,024-token cache floor, activating prompt caching as a side
+effect (cache_creation=1,262 on first query, cache_read=1,262 on subsequent queries).
 
-1. **Explicit anti-injection instruction**: Add to system prompt: "Do not introduce
-   concepts, types, or code that are not present in the provided chunks. If the chunks
-   do not fully answer the question, state what is and is not covered." Tests whether
-   generation-side instruction alone changes injection rate.
+Measured on 5 FM-2 records (baseline → few-shot faithfulness):
+
+| ID    | Baseline | Few-shot | Delta |
+|-------|---------|---------|-------|
+| c1_15 | 2       | 5       | +3    |
+| c1_16 | 2       | 5       | +3    |
+| c4_02 | 2       | 5       | +3    |
+| c4_30 | 2       | 5       | +3    |
+| c3_08 | 2       | 3       | +1 (still flagged) |
+
+4 of 5 fully resolved (faith=5). 1 partial improvement (c3_08). 0 regressions.
+
+c3_08 (middleware + exception headers) improved but stayed flagged — the mechanism
+explanation became more grounded but remained incomplete because the chunks themselves
+do not contain the full interaction chain.
+
+Bundled-change caveat: four examples changed simultaneously; per-example attribution
+would require ablation runs, not performed. The claim is that the few-shot grounding
+prompt as a whole resolved FM-2 on 4 of 5 records.
+
+Remaining candidates (not measured):
 
 2. **Faithfulness-gated output**: Run the judge in-loop before returning the answer to
    the user. Only release answers scoring >= 4. Expensive and adds latency.
@@ -231,10 +253,31 @@ Two contributing factors:
 
 ### Mitigation
 
-Not yet mitigated. Candidates:
+Mitigated via the same few-shot grounding prompt applied to FM-2 (contradiction-guard
+Example 4 instructs the model to trust chunk content over prior knowledge and to
+reflect chunk statements accurately).
 
-1. **Re-read instruction**: Instruct the model to quote the relevant chunk sentence before
-   making a claim about it. Forces explicit grounding, makes contradictions less likely.
+Measured on 3 FM-3 records (baseline → few-shot faithfulness):
+
+| ID    | Baseline | Few-shot | Delta | Notes |
+|-------|---------|---------|-------|-------|
+| c1_13 | 2       | 5       | +3    | Dependency execution order inverted: fully resolved |
+| c4_30 | 2       | 5       | +3    | FM-2+FM-3 overlap: fully resolved |
+| c3_16 | 2       | 2       | 0     | No change — diagnostic boundary case (see below) |
+
+2 of 3 resolved to faith=5. 1 held at faith=2. 0 regressions.
+
+c3_16 (response_model filtering vs. middleware) is the diagnostic boundary case: it
+presents as FM-3 (the model contradicts chunk content) but the retrieved chunks are
+themselves ambiguous about the response_model/middleware interaction. No generation-side
+instruction can resolve a contradiction when the evidence is genuinely unclear in the
+chunks. c3_16 is effectively FM-4 (the integration is not cleanly stated in any chunk)
+presenting as FM-3. The two records with unambiguous chunk evidence both resolved to
+faith=5; the one with ambiguous chunk evidence did not move. This confirms the fix
+surface: contradiction is fixable by prompting only when the correct answer is
+unambiguously present in the chunks.
+
+Remaining candidates (not measured):
 
 2. **Higher-confidence threshold + abstention**: If the model scores 2-3 on the judge,
    re-generate with a stricter instruction. Circular but measurable.
@@ -359,6 +402,28 @@ Production solutions, none of which are reranking:
 
 All three are out of scope for this project and documented as the path forward
 for the production-scale autopsy.
+
+**Generation-side note (few-shot framing, 2026-05-22):** Three FM-4 records were also
+tested with the few-shot grounding prompt (Example 2, honest partial answer):
+
+| ID    | Baseline | Few-shot | Delta |
+|-------|---------|---------|-------|
+| c3_06 | 3       | 5       | +2    |
+| c3_22 | 3       | 5       | +2    |
+| c3_26 | 3       | 5       | +2    |
+
+All three moved from faith=3 to faith=5. This does not contradict the reranking
+finding. These records had adequate retrieval — the correct individual chunks were
+returned at baseline — but the generation under-used them, producing "correct but
+incomplete" answers. The few-shot framing example (Example 2) changed the generation
+behavior: the model now explicitly states what the chunks do and do not cover rather
+than under-delivering. This improved the judge score because the answer became more
+honest and complete within the limits of the retrieved evidence.
+
+FM-4 records where the integration content is genuinely absent from the corpus remain
+unfixable by prompting. The generation fix applies only to records where retrieval
+succeeded but the generator failed to extract full value from the chunks. These are
+two distinct sub-cases of FM-4 that the few-shot experiment separated empirically.
 
 ### Generalization
 

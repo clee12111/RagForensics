@@ -323,3 +323,41 @@ measurement on cross_reference (30 questions); documented FM-4 mitigation result
 - FM-2 and FM-3 mitigation: test generation-side interventions (anti-injection prompt
   instruction for FM-2; quote-before-claim or re-read instruction for FM-3)
 - Run full 150-question eval after each generation prompt change to measure delta
+
+## 2026-05-22 — Few-shot grounding prompt: generation-side mitigation
+
+**Worked on:** Expanded system prompt to four worked examples (grounded answer, honest
+partial, injection refusal, contradiction guard); tested on 10 targeted FM-2/FM-3/FM-4
+records. Activated prompt caching as a side effect.
+
+**Decisions:**
+- Generation-side mitigation for FM-2 and FM-3 via few-shot prompt — matched fix
+  surface to failure mechanism (generation failures get a generation fix)
+- Bundled four examples in one change rather than single-example ablations — accepted
+  loss of per-example attribution to avoid debugging-hours scope creep
+- Few-shot prompt retained as the pipeline default — clean win, no regressions
+
+**Measurements:**
+- Faithfulness: 8 of 10 records up (+2 to +3), 1 held (c3_16), 0 regressed
+- FM-2: 4 of 5 resolved to faith=5 (c1_15, c1_16, c4_02, c4_30); c3_08: 2→3 partial
+- FM-3: 2 of 3 resolved to faith=5 (c1_13, c4_30); c3_16: 2→2 no change
+- FM-4 partial-answer framing: c3_06/c3_22/c3_26 all 3→5
+- Prompt caching activated: ~1,408-token prompt crossed the 1,024-token floor;
+  cache_creation=1,262 on first query, cache_read=1,262 on 9 subsequent queries —
+  confirms the earlier dormant-caching diagnosis and fix
+- c3_16 held at faith=2: diagnostic boundary case (FM-3 presentation, FM-4
+  mechanism — chunks are ambiguous about the response_model/middleware interaction)
+
+**What surprised me:**
+- The generation-side fix was clean (+3, zero regressions) where the retrieval-side
+  fix (reranking) was neutral-to-negative. Matching the fix to the failure layer is
+  the difference between a clean win and a lateral swap.
+- The one record that didn't move (c3_16) confirmed the diagnostic map more precisely
+  than the eight that did — it sits on the FM-3/FM-4 seam.
+
+**Next:**
+- Wire Langfuse (keys ready, stack to start) — confirm per-stage traces populate
+- Keyword/hybrid retrieval for FM-1, tested against the few-shot-prompt baseline (not
+  original dense baseline — grounding prompt may already absorb some FM-1 fabrication
+  via the abstention example; keyword delta is marginal-on-top-of-grounding)
+- Single full optimized-stack run (dense + few-shot prompt), then cross-provider

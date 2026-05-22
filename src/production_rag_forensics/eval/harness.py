@@ -80,6 +80,7 @@ def _compute_cost(
 def _load_questions(
     category: str | None,
     limit: int | None,
+    ids: set[str] | None = None,
 ) -> list[dict]:
     questions = []
     with EVAL_SET_PATH.open() as f:
@@ -88,6 +89,8 @@ def _load_questions(
             if not line:
                 continue
             q = json.loads(line)
+            if ids and q["id"] not in ids:
+                continue
             if category and q["category"] != category:
                 continue
             questions.append(q)
@@ -162,15 +165,16 @@ def _load_completed_ids(output: Path) -> set[str]:
 
 
 def run(
-    category: str | None = None,
-    limit:    int | None  = None,
-    output:   Path        = DEFAULT_OUT_PATH,
-    fresh:    bool        = False,
+    category: str | None       = None,
+    limit:    int | None        = None,
+    output:   Path              = DEFAULT_OUT_PATH,
+    fresh:    bool              = False,
+    ids:      set[str] | None   = None,
 ) -> None:
     # Import here so module-level client init only happens when actually running
     from production_rag_forensics.orchestration.graph import run_query
 
-    questions = _load_questions(category, limit)
+    questions = _load_questions(category, limit, ids=ids)
     if not questions:
         print("No questions matched the filter.", file=sys.stderr)
         sys.exit(1)
@@ -257,13 +261,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Override output path (default: data/eval_results.jsonl)")
     p.add_argument("--fresh", action="store_true", default=False,
                    help="Force a clean run — truncate output file and run all questions")
+    p.add_argument("--ids", default=None,
+                   help="Comma-separated question IDs to run (e.g. c1_13,c3_06)")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     category = _resolve_category(args.category) if args.category else None
-    run(category=category, limit=args.limit, output=args.output, fresh=args.fresh)
+    ids = set(args.ids.split(",")) if args.ids else None
+    run(category=category, limit=args.limit, output=args.output, fresh=args.fresh, ids=ids)
 
 
 if __name__ == "__main__":
