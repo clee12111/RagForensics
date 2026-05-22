@@ -230,6 +230,8 @@ def run(
                 "input_tokens":          inp,
                 "output_tokens":         out_tok,
                 "cost_usd":              round(cost, 6),
+                "reranker_cost_usd":     round(result.get("reranker_cost_usd", 0.0), 6),
+                "reranked":              result.get("reranked", False),
             }
 
             out_f.write(json.dumps(record) + "\n")

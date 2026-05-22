@@ -45,6 +45,8 @@ _anthropic = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 EMBED_MODEL   = "text-embedding-3-small"
 CLAUDE_MODEL  = "claude-sonnet-4-6"
 TOP_K         = 5
+RERANK        = True      # True: fetch 20 from Pinecone, rerank to top 5; False: dense top-5 only
+_RERANK_FETCH = 20        # candidate pool size when RERANK=True
 
 # System prompt as a structured block with cache_control.
 # The system prompt is the stable, per-deployment surface — same text on every
@@ -71,6 +73,8 @@ class RAGState(TypedDict):
     retrieved_chunks:  Optional[list[dict]]
     answer:            Optional[str]
     usage:             Optional[dict]   # {input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens}
+    reranker_cost_usd: Optional[float]
+    reranked:          Optional[bool]
 
 
 # ── Graph nodes ───────────────────────────────────────────────────────────────
@@ -94,13 +98,22 @@ def embed_query(state: RAGState) -> RAGState:
 
 
 def retrieve(state: RAGState) -> RAGState:
-    """Dense retrieval: query Pinecone top_k=5, return chunks with metadata."""
+    """
+    Dense retrieval from Pinecone, optionally followed by Haiku reranking.
+
+    RERANK=False: fetch top_k=5, return directly.
+    RERANK=True:  fetch top_k=20, rerank to top_k=5 via Haiku 4.5.
+    """
+    from production_rag_forensics.retrieval.reranker import Reranker
+
     lf = get_client()
     vec = state["query_embedding"]
 
+    fetch_k = _RERANK_FETCH if RERANK else TOP_K
+
     with langfuse_span(lf, name="retrieve", obs_type="retriever",
-                       input={"top_k": TOP_K, "index": "fastapi-docs-v1"}):
-        result = _index.query(vector=vec, top_k=TOP_K, include_metadata=True)
+                       input={"fetch_k": fetch_k, "rerank": RERANK, "index": "fastapi-docs-v1"}):
+        result = _index.query(vector=vec, top_k=fetch_k, include_metadata=True)
 
         chunks = [
             {
@@ -112,16 +125,29 @@ def retrieve(state: RAGState) -> RAGState:
             for match in result.matches
         ]
 
+        reranker_cost = 0.0
+        if RERANK:
+            reranker = Reranker()
+            chunks = reranker.rerank(state["query"], chunks, top_k=TOP_K)
+            reranker_cost = chunks[0].pop("rerank_cost_usd", 0.0) if chunks else 0.0
+
         if lf:
             lf.update_current_span(
                 output={
                     "chunks_returned": len(chunks),
-                    "scores": [round(c["score"], 4) for c in chunks],
+                    "reranked": RERANK,
+                    "reranker_cost_usd": reranker_cost,
+                    "scores": [round(c.get("reranker_score", c["score"]), 4) for c in chunks],
                     "sources": [c["source_file"] for c in chunks],
                 }
             )
 
-    return {**state, "retrieved_chunks": chunks}
+    return {
+        **state,
+        "retrieved_chunks":  chunks,
+        "reranker_cost_usd": reranker_cost,
+        "reranked":          RERANK,
+    }
 
 
 def generate(state: RAGState) -> RAGState:
@@ -202,11 +228,13 @@ def run_query(query: str) -> dict:
         {
             "query":                  str,
             "answer":                 str,
-            "chunks":                 list[dict],  # {text, source_file, header_path, score}
+            "chunks":                 list[dict],  # {text, source_file, header_path, score, ...}
             "input_tokens":           int,
             "output_tokens":          int,
             "cache_creation_tokens":  int,
             "cache_read_tokens":      int,
+            "reranker_cost_usd":      float,       # 0.0 if RERANK=False
+            "reranked":               bool,
         }
 
     If Langfuse is configured, wraps the entire invocation in a parent trace
@@ -215,11 +243,13 @@ def run_query(query: str) -> dict:
     lf = get_client()
 
     initial_state: RAGState = {
-        "query":            query,
-        "query_embedding":  None,
-        "retrieved_chunks": None,
-        "answer":           None,
-        "usage":            None,
+        "query":             query,
+        "query_embedding":   None,
+        "retrieved_chunks":  None,
+        "answer":            None,
+        "usage":             None,
+        "reranker_cost_usd": None,
+        "reranked":          None,
     }
 
     if lf:
@@ -243,4 +273,6 @@ def run_query(query: str) -> dict:
         "output_tokens":          usage.get("output_tokens", 0),
         "cache_creation_tokens":  usage.get("cache_creation_tokens", 0),
         "cache_read_tokens":      usage.get("cache_read_tokens", 0),
+        "reranker_cost_usd":      final.get("reranker_cost_usd") or 0.0,
+        "reranked":               final.get("reranked") or False,
     }
