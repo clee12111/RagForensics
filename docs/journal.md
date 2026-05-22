@@ -234,3 +234,45 @@
 
 **Next:**
 - Implement Haiku reranking (queued in build order) — first mitigation candidate for FM-4; measure cross_reference category delta before/after
+
+## 2026-05-22 — Phase 3: Four failure modes characterized
+
+**Worked on:** Manual inspection of 22 flagged and 5 faith=0 records; four failure modes 
+identified, measured, and documented in docs/failure_modes.md.
+
+**Decisions:**
+- Four failure modes separated by mechanism, not by score alone — FM-2 and FM-3 both 
+  score faith=2 but have different fix surfaces (generation prompt vs. retrieval quality)
+- FM-4 documented as architectural rather than retrieval quality failure — the corpus 
+  is organized by feature not by interaction pattern; better retrieval over the same 
+  corpus cannot produce missing integration content
+- Haiku reranking queued as first mitigation measurement target for FM-4 specifically
+
+**Measurements:**
+- FM-1 (confident hallucination): 5 records, faith=0, 3.3% overall, 10% in 
+  cross_reference — model fabricates when retrieval returns entirely wrong chunks
+- FM-2 (knowledge injection): 8 records, faith=2, 5.3% overall, 10% each in 
+  cross_reference and edge_case — model supplements partial context with parametric 
+  knowledge not in any chunk
+- FM-3 (factual contradiction): 3 records, faith=2, 2.0% overall — parametric prior 
+  overrides in-context evidence; dependency execution order inverted in c1_13
+- FM-4 (multi-document synthesis gap): 14 records, faith=3, 9.3% overall, 16.7% each 
+  in cross_reference and edge_case — no single chunk contains the A+B integration the 
+  question requires
+- cross_reference mean faithfulness 3.90 vs overall 4.41 — 0.51 gap driven primarily 
+  by FM-4
+
+**What surprised me:**
+- FM-3 (factual contradiction) is the most dangerous failure mode despite lowest record 
+  count — the model is most confident when it contradicts retrieved content, making it 
+  hardest to detect without a judge
+- FM-4 is not fixable by better retrieval alone — the documentation corpus structurally 
+  lacks integration-pattern content; this is a corpus organization problem masquerading 
+  as a retrieval problem
+
+**Next:**
+- Add Haiku 4.5 reranking to the retrieval pipeline 
+  (src/production_rag_forensics/retrieval/reranker.py)
+- Re-run eval on cross_reference category only (30 questions, ~$0.40)
+- Measure precision@5 and faithfulness delta before/after reranking
+- Document whether reranking earns its place for FM-4
