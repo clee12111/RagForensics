@@ -144,10 +144,28 @@ def _run_with_529_retry(run_query, question: str) -> dict:
     return run_query(question)
 
 
+def _load_completed_ids(output: Path) -> set[str]:
+    """Read already-completed question IDs from an existing output file."""
+    if not output.exists():
+        return set()
+    completed: set[str] = set()
+    with output.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                completed.add(json.loads(line)["id"])
+            except (json.JSONDecodeError, KeyError):
+                pass
+    return completed
+
+
 def run(
     category: str | None = None,
     limit:    int | None  = None,
     output:   Path        = DEFAULT_OUT_PATH,
+    fresh:    bool        = False,
 ) -> None:
     # Import here so module-level client init only happens when actually running
     from production_rag_forensics.orchestration.graph import run_query
@@ -158,10 +176,26 @@ def run(
         sys.exit(1)
 
     output.parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Resume logic ──────────────────────────────────────────────────────────
+    if fresh and output.exists():
+        output.unlink()
+
+    completed_ids = _load_completed_ids(output)
+    if completed_ids:
+        print(f"Resuming -- {len(completed_ids)} questions already completed, skipping")
+    else:
+        print("Starting fresh run")
+
+    pending = [q for q in questions if q["id"] not in completed_ids]
+    if not pending:
+        print("All questions in this run already completed. Nothing to do.")
+        return
+
     results: list[dict] = []
 
-    with output.open("w", encoding="utf-8") as out_f:
-        for q in questions:
+    with output.open("a", encoding="utf-8") as out_f:
+        for q in pending:
             t0 = time.perf_counter()
             result = _run_with_529_retry(run_query, q["question"])
             latency_ms = round((time.perf_counter() - t0) * 1000)
@@ -183,19 +217,19 @@ def run(
             ]
 
             record: dict = {
-                "id":                   q["id"],
-                "category":             q["category"],
-                "question":             q["question"],
-                "answer":               result["answer"],
-                "chunks":               chunks_out,
-                "precision_at_5":       None,
-                "faithfulness":         None,
-                "latency_ms":           latency_ms,
+                "id":                    q["id"],
+                "category":              q["category"],
+                "question":              q["question"],
+                "answer":                result["answer"],
+                "chunks":                chunks_out,
+                "precision_at_5":        None,
+                "faithfulness":          None,
+                "latency_ms":            latency_ms,
                 "cache_creation_tokens": cache_cre,
-                "cache_read_tokens":    cache_read,
-                "input_tokens":         inp,
-                "output_tokens":        out_tok,
-                "cost_usd":             round(cost, 6),
+                "cache_read_tokens":     cache_read,
+                "input_tokens":          inp,
+                "output_tokens":         out_tok,
+                "cost_usd":              round(cost, 6),
             }
 
             out_f.write(json.dumps(record) + "\n")
@@ -205,7 +239,8 @@ def run(
             print(f"{q['id']} [{q['category']}] -- done ({latency_ms}ms)")
 
     _print_summary(results)
-    print(f"\nResults written to {output} ({len(results)} records)")
+    total_in_file = len(completed_ids) + len(results)
+    print(f"\nResults written to {output} ({len(results)} new records, {total_in_file} total)")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -216,13 +251,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Run only the first N questions")
     p.add_argument("--output", type=Path, default=DEFAULT_OUT_PATH,
                    help="Override output path (default: data/eval_results.jsonl)")
+    p.add_argument("--fresh", action="store_true", default=False,
+                   help="Force a clean run — truncate output file and run all questions")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     category = _resolve_category(args.category) if args.category else None
-    run(category=category, limit=args.limit, output=args.output)
+    run(category=category, limit=args.limit, output=args.output, fresh=args.fresh)
 
 
 if __name__ == "__main__":
