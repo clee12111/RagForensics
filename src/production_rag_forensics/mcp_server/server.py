@@ -29,7 +29,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Pin .env to the project root so the path is correct regardless of what CWD
+# Claude Desktop uses when launching this as a stdio subprocess.
+_ENV_FILE = Path(__file__).parent.parent.parent.parent / ".env"
+load_dotenv(_ENV_FILE)
 
 from mcp.server.fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -174,14 +177,35 @@ def _eval_summary(records: list[dict]) -> dict[str, Any]:
     return {"categories": rows, "total": total}
 
 
+_langfuse_client: Any = None  # module-level singleton; constructed once per process
+
+
 def _get_langfuse():
+    """Return a cached Langfuse client (0.8s constructor, so only pay once)."""
+    global _langfuse_client
+    if _langfuse_client is not None:
+        return _langfuse_client
+
+    import logging
     from langfuse import Langfuse
+
+    # Langfuse's SDK logs to a 'langfuse' logger. In stdio mode stdout is the
+    # JSON-RPC transport — any extraneous bytes corrupt the stream. Route all
+    # Langfuse log output to stderr only.
+    lf_logger = logging.getLogger("langfuse")
+    if not lf_logger.handlers:
+        h = logging.StreamHandler()  # defaults to sys.stderr
+        lf_logger.addHandler(h)
+    lf_logger.propagate = False  # don't bubble up to root logger (which may use stdout)
+
     pk   = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
     sk   = os.environ.get("LANGFUSE_SECRET_KEY", "")
     host = os.environ.get("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
     if not pk or not sk:
         raise RuntimeError("LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set")
-    return Langfuse(public_key=pk, secret_key=sk, host=host)
+
+    _langfuse_client = Langfuse(public_key=pk, secret_key=sk, host=host)
+    return _langfuse_client
 
 
 def _fetch_observations(stage: str, limit: int = 200) -> list[Any]:
