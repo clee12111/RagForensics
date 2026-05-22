@@ -113,3 +113,23 @@
 
 **Next:**
 - Pinecone indexing: create a serverless index at 1536 dims (cosine), upsert the 584 vectors from chunks_embedded.jsonl with metadata, and verify retrieval returns the known-correct chunk for a few hand-checked queries. Indexer reads the persisted file — no re-embedding.
+
+## 2026-05-21 — Pinecone indexing and first retrieval baseline
+
+**Worked on:** Built the indexer (src/production_rag_forensics/retrieval/indexer.py), created the Pinecone serverless index, upserted all 584 embedded chunks, ran a first retrieval sanity check, and verified no index duplication.
+
+**Decisions:**
+- Serverless index fastapi-docs-v1, 1536 dims, cosine, AWS us-east-1 (free-tier region), created via pc.indexes.create() (current API, not the deprecated create_index shim).
+- Chunk text stored in Pinecone metadata alongside the vector so retrieval returns content directly — all 584 chunks' metadata verified under Pinecone's ~40KB/vector limit (largest, stream-data, ~7KB).
+- Indexer reads persisted chunks_embedded.jsonl — no re-embedding.
+
+**Measurements:**
+- 584 vectors upserted; describe_index_stats confirms exactly 584; all 584 chunk_ids unique; query 1 top-5 returned 5 distinct ids (no duplication).
+- First retrieval sanity check (3 hand-picked queries, dense-only, top_k=5, no reranking): top-1/top-2 on-topic for all three. Score separation varied — tight for path-params (~0.51–0.60), sharp for error-handling (0.53→0.49→0.39). Dense-only baseline.
+
+**What surprised me:**
+- Per-query variance in score separation: dense retrieval discriminated cleanly on some query types and poorly on others (flat spread where the correct chunk barely led topically-adjacent ones, e.g. a path-prefix/proxy chunk sitting near the path-parameter-definition chunk). First empirical hint of (a) the case for reranking — does joint query-chunk scoring widen the gap? — and (b) why per-category eval is necessary, since aggregate retrieval quality hides this variance. Hypotheses to test in Phase 2, not findings.
+- A query surfacing two different chunks from the same source file (two sections of path-params.md) initially looked like possible duplication; verification confirmed distinct chunk_ids — expected behavior, not a bug.
+
+**Next:**
+- LangGraph retrieval workflow (src/production_rag_forensics/orchestration/graph.py): wire query → embed → Pinecone retrieve → generation into an agent loop, then thread Langfuse tracing through it. (Hybrid sparse+dense retrieval and reranking remain queued as later retrieval-quality stages.)

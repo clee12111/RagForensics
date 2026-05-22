@@ -22,7 +22,7 @@
 FastAPI docs (cloned repo, pinned commit)
   → chunker (section-based, ## / ###, merge floor ~200 tok, target ~512 tok, B1 fence protection)
     → OpenAI text-embedding-3-small (1536-dim, symmetric, own-embedder call)
-      → Pinecone index (upsert with metadata)
+      → Pinecone serverless index: fastapi-docs-v1 (1536-dim, cosine, AWS us-east-1, 584 vectors)
 ```
 
 ### Query path
