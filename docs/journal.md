@@ -133,3 +133,28 @@
 
 **Next:**
 - LangGraph retrieval workflow (src/production_rag_forensics/orchestration/graph.py): wire query → embed → Pinecone retrieve → generation into an agent loop, then thread Langfuse tracing through it. (Hybrid sparse+dense retrieval and reranking remain queued as later retrieval-quality stages.)
+
+## 2026-05-21 — LangGraph orchestration and prompt caching
+
+**Worked on:** End-to-end RAG pipeline wired: embed → retrieve → generate with Claude Sonnet 4.6, Anthropic prompt caching on system prompt, Langfuse span instrumentation scaffolded.
+
+**Decisions:**
+- Anthropic SDK directly for generation, not LangChain wrappers — preserves per-stage cost as a separately measurable quantity
+- cache_control on system prompt only; retrieved chunks excluded from cache — chunks rotate per query, caching them would thrash the cache and increase cost
+- Committed before Langfuse traces confirmed — observability wire-up is not a correctness gate; code correctness verified independently
+- Tightened pre-commit secret scan to pattern-match actual key values (sk-/pk-/Bearer + 10-char gate); dropped bare "secret"/"password" matches that flagged env var names as false positives
+
+**Measurements:**
+- Smoke test: "How do I declare path parameters in FastAPI?"
+- Answer: grounded, 4 sub-topics covered, no hallucinations detected
+- Retrieval: ranks 1–2 path-params.md (correct), rank 5 dependencies/index.md (weak) — dense-only, no reranker
+- Cache write: 2,622 tokens on first call (cache_creation=2622, cache_read=0)
+- Cache read: pending second smoke test run confirmation
+
+**What surprised me:**
+- LangGraph StateGraph adds real boilerplate overhead for a linear 3-node pipeline; abstraction does not earn its place until the graph has conditional branching
+
+**Next:**
+- Start Docker Desktop, wire Langfuse keys into .env, confirm all 3 node spans appear under parent trace
+- Run test_graph.py second time to confirm cache_read=2622, cache_creation=0
+- Phase 2: src/eval/harness.py — Cody writes first eval questions before harness is built
