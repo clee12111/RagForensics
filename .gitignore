@@ -63,3 +63,4 @@ traces/
 
 # Scratch / throwaway diagnostic scripts (underscore prefix convention)
 scripts/_*.py
+scripts/test_graph.py
