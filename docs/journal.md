@@ -361,3 +361,40 @@ records. Activated prompt caching as a side effect.
   original dense baseline — grounding prompt may already absorb some FM-1 fabrication
   via the abstention example; keyword delta is marginal-on-top-of-grounding)
 - Single full optimized-stack run (dense + few-shot prompt), then cross-provider
+
+## 2026-05-22 — Langfuse tracing wired (cloud); per-stage latency confirmed
+
+**Worked on:** Connected Langfuse for per-stage trace instrumentation;
+captured first per-stage latency and cost breakdown from real traces.
+
+**Decisions:**
+- Langfuse self-hosted (Docker) → Langfuse Cloud — deviation from PLAN.md's
+  locked "self-hosted via Docker" decision. Rationale: this machine lacks
+  hardware virtualization support (BIOS toggle unavailable/incompatible), so
+  the Docker Compose stack cannot run. Cloud provides the identical SDK, span
+  model, and UI; only the backend host differs. Trace data for a FastAPI-docs
+  RAG study contains nothing sensitive, so cloud hosting carries no data
+  concern. The transferable-signal rationale (same Langfuse skills/instrumentation)
+  still holds. compose.yaml retained for anyone with virtualization.
+
+**Measurements:**
+- Per-stage latency, query c22ba84d (path-params question, dense-only):
+  embed_query 0.53s (5%), retrieve 0.36s (3%), generate 9.98s (91%), total 10.95s
+- Generation dominates wall-clock at 91%; retrieval+embed together under 1s
+- Per-query cost: $0.007689, entirely attributed to the generate span
+- Trace structure confirmed: rag-query parent with three child spans,
+  backend=none verified in retrieve span (reranking off, as intended)
+
+**What surprised me:**
+- Generation is an even larger share of latency than estimated (91%). This
+  retroactively sharpens the reranking finding: the Haiku reranker's ~28s
+  overhead would have ~4x'd per-query latency on top of an already
+  generation-bound pipeline, for neutral-to-negative faithfulness.
+
+**Next:**
+- FM-1 keyword/hybrid retrieval experiment (tested against few-shot-prompt
+  baseline, on the 5 faith=0 retrieval-miss records)
+- Then single full optimized-stack run (dense + few-shot prompt) with Langfuse
+  capturing all traces
+- Then cross-provider study — generation-stage comparison, since generate is
+  91% of latency and 100% of per-query cost
