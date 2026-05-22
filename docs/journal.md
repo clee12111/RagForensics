@@ -1,5 +1,30 @@
 # Engineering Journal
 
+## 2026-05-22 — MCP server: six instrumentation tools, verified via Claude Desktop
+
+**Worked on:** Built and verified the custom MCP server exposing project instrumentation (journal, failure modes, eval results, Langfuse traces) as agent-queryable tools. Connected and tested from Claude Desktop.
+
+**Decisions:**
+- Server supports both transports: Streamable HTTP (production/remote, matches PLAN.md design intent) and stdio (local Desktop integration). Desktop's connector UI rejects local plaintext-http (requires https), so stdio is the local path.
+- Langfuse keys passed via Desktop config env block — subprocess doesn't inherit the activated venv's .env reliably; pinned .env load to __file__ as backup.
+- Langfuse client cached as module singleton (0.83s constructor paid once, not per call).
+- Langfuse-backed tools wrapped in asyncio.to_thread() — synchronous 1s+ HTTP calls were blocking FastMCP's stdio event loop, causing Desktop to hang with no response. Off-loading to a thread keeps the JSON-RPC channel responsive.
+
+**Measurements:**
+- Six tools verified returning live data through Desktop:
+  - failure_modes(FM-1) → full writeup from docs/failure_modes.md
+  - retrieval_latency → p50=87ms, p95=578ms, mean=233ms over 200 Langfuse spans
+- All three data backends confirmed: docs files, eval JSONL, Langfuse cloud API
+
+**What surprised me:**
+- The async event-loop block was the real hang, not credentials or stdout contamination (both also fixed along the way). A synchronous network call in an async stdio tool freezes the whole event loop — terminal isolation (1.15s standalone vs infinite hang via Desktop) was what pinpointed it.
+- p95 retrieval latency (578ms) is ~7x p50 (87ms) — a real tail-latency spread worth noting; the MCP server surfacing this is the recursive-audit-loop working as intended.
+
+**Next:**
+- Documentation polish session: README sync (MCP setup instructions, FM/eval-harness-failure distinction), LangGraph retrospective verdict, "what I'd do from the start" retrospective
+- Optional: Cursor as second MCP client (PLAN.md's both-clients spec)
+- Add timeout to Langfuse calls (defensive — they work, but should fail fast rather than rely on the thread offload if Langfuse is ever unreachable)
+
 ## 2026-05-22 — MCP server build
 
 **Worked on:** Custom MCP server exposing 6 instrumentation tools over Streamable HTTP; verified from Claude Desktop.
