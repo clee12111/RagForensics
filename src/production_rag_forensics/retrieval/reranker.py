@@ -27,6 +27,8 @@ from anthropic import Anthropic
 
 _529_WAITS = [15, 30, 60]  # seconds; fail loud after 3 retries
 
+MAX_PER_SOURCE = 2  # max chunks from the same source_file in the returned top_k
+
 # ── Pricing ───────────────────────────────────────────────────────────────────
 
 _INPUT_PER_M  = 0.80   # $/M input tokens
@@ -100,7 +102,7 @@ class Reranker:
             try:
                 return self._client.messages.create(
                     model=_MODEL,
-                    max_tokens=60,
+                    max_tokens=150,
                     temperature=0,
                     system=_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_msg}],
@@ -113,7 +115,7 @@ class Reranker:
         # Final attempt — let any exception propagate
         return self._client.messages.create(
             model=_MODEL,
-            max_tokens=60,
+            max_tokens=150,
             temperature=0,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
@@ -167,9 +169,30 @@ class Reranker:
             }
             scored.append(scored_chunk)
 
-        # Sort by reranker_score descending, take top_k
+        # Sort by reranker_score descending
         scored.sort(key=lambda c: c["reranker_score"], reverse=True)
-        result = scored[:top_k]
+
+        # Apply per-source diversity cap: max MAX_PER_SOURCE chunks per source_file
+        source_counts: dict[str, int] = {}
+        result: list[dict] = []
+        overflow: list[dict] = []  # chunks skipped by cap, for fill-up if needed
+
+        for c in scored:
+            src = c.get("source_file", "")
+            if source_counts.get(src, 0) < MAX_PER_SOURCE:
+                result.append(c)
+                source_counts[src] = source_counts.get(src, 0) + 1
+                if len(result) == top_k:
+                    break
+            else:
+                overflow.append(c)
+
+        # Fill up to top_k if cap left us short (rare but possible)
+        if len(result) < top_k:
+            for c in overflow:
+                result.append(c)
+                if len(result) == top_k:
+                    break
 
         # Attach total rerank cost to first chunk
         if result:

@@ -9,7 +9,7 @@
 | Observability | Langfuse (self-hosted via Docker) | Open-source, transferable signal. Production-grade tracing without locking to a framework vendor. |
 | Inference (primary) | Claude Sonnet 4.6 | With prompt caching enabled. Best-value flagship. |
 | Inference (comparison) | GPT-5.4, Gemini 3.1 Pro | Cross-provider measurement is part of the analytical core. |
-| Reranking tier | Claude Haiku 4.5 (Phase 1 default — pending measurement, see Open questions) | Cheap-tier retrieval signal. |
+| Reranking tier | None (dense-only, locked 2026-05-22) | Both Haiku LLM and cross-encoder rerankers measured neutral-to-negative on cross_reference. Dense-only wins. Reranker code retained. |
 | Service layer | FastAPI | Production interface, also dogfooding the corpus. |
 | Agent interface | Custom MCP server (Streamable HTTP) | Exposes journal/failure-mode/cost as agent-queryable tools. |
 | Corpus | FastAPI documentation (English, release 0.136.1, 150 files, include-directives resolved to inline example code) | Heterogeneous structure (prose, code, API refs, tutorials). Verifiable without domain ramp-up. |
@@ -32,7 +32,6 @@ User query
   → FastAPI service layer
     → LangGraph agent loop
       → Pinecone hybrid retrieval (sparse + dense)
-        → Claude Haiku 4.5 reranker
           → Claude Sonnet 4.6 generation (+ GPT-5.4, Gemini 3.1 Pro for comparison)
             → Response
                 │
@@ -62,5 +61,5 @@ User query
 - **Code-specialized embedding:** text-embedding-3-small is the locked choice; a code-specialist model (e.g. voyage-code-3) is a held upgrade if syntactic eval category underperforms in Phase 2 baseline.
 - **Reranking threshold:** At what reranker score should retrieved chunks be filtered out? Requires baseline eval data to set empirically.
 - **Hybrid search weighting:** Sparse/dense balance for Reciprocal Rank Fusion (RRF). The right alpha depends on query category distribution and needs per-category measurement to tune.
-- **Reranker model choice.** Haiku 4.5 is the Phase 1 default because the project already has Anthropic access and using a generalist LLM as a reranker is itself an interesting forensic question. Alternatives (Cohere Rerank 3, Voyage Rerank-2) will be considered if Haiku's measurements show it doesn't earn its place. Decision deferred to Phase 2 baseline eval.
-- **Does reranking earn its place at all?** Whether the reranking stage materially improves precision@5 over retrieval-only, per question category. To be answered with measurements in Phase 2.
+- **Reranker model choice.** RESOLVED (2026-05-22): Moot. Both Haiku LLM reranker and cross-encoder (ms-marco-MiniLM-L-6-v2) are neutral-to-negative on cross_reference (mean faithfulness 3.87 and 3.70 respectively vs. dense-only 3.90). Neither earns its place. Pipeline default is dense-only retrieval. Reranker code retained for future experiments.
+- **Does reranking earn its place at all?** RESOLVED (2026-05-22): No. Dense-only retrieval wins on cross_reference (mean faithfulness 3.90 vs. 3.87 Haiku, 3.70 cross-encoder). The binding constraint is corpus structure (knowledge fragmentation), not retrieval signal quality. Reranking cannot surface integration content that does not exist as a retrievable unit.

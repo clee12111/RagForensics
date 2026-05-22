@@ -42,11 +42,15 @@ _pc       = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
 _index    = _pc.Index("fastapi-docs-v1")
 _anthropic = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-EMBED_MODEL   = "text-embedding-3-small"
-CLAUDE_MODEL  = "claude-sonnet-4-6"
-TOP_K         = 5
-RERANK        = True      # True: fetch 20 from Pinecone, rerank to top 5; False: dense top-5 only
-_RERANK_FETCH = 20        # candidate pool size when RERANK=True
+EMBED_MODEL        = "text-embedding-3-small"
+CLAUDE_MODEL       = "claude-sonnet-4-6"
+TOP_K              = 5
+RERANKER_BACKEND   = "none"            # "cross_encoder" | "haiku" | "none"
+_FETCH_K: dict[str, int] = {
+    "cross_encoder": 50,   # batched pass is cheap — wider candidate pool
+    "haiku":         20,   # 20 sequential API calls per query
+    "none":           5,   # dense top-5 directly
+}
 
 # System prompt as a structured block with cache_control.
 # The system prompt is the stable, per-deployment surface — same text on every
@@ -99,20 +103,19 @@ def embed_query(state: RAGState) -> RAGState:
 
 def retrieve(state: RAGState) -> RAGState:
     """
-    Dense retrieval from Pinecone, optionally followed by Haiku reranking.
+    Dense retrieval from Pinecone, optionally followed by reranking.
 
-    RERANK=False: fetch top_k=5, return directly.
-    RERANK=True:  fetch top_k=20, rerank to top_k=5 via Haiku 4.5.
+    RERANKER_BACKEND="none":         fetch top_k=5, return directly.
+    RERANKER_BACKEND="haiku":        fetch top_k=20, rerank via Haiku 4.5 (20 API calls).
+    RERANKER_BACKEND="cross_encoder": fetch top_k=50, rerank via cross-encoder (1 batched pass).
     """
-    from production_rag_forensics.retrieval.reranker import Reranker
-
     lf = get_client()
     vec = state["query_embedding"]
-
-    fetch_k = _RERANK_FETCH if RERANK else TOP_K
+    fetch_k = _FETCH_K[RERANKER_BACKEND]
 
     with langfuse_span(lf, name="retrieve", obs_type="retriever",
-                       input={"fetch_k": fetch_k, "rerank": RERANK, "index": "fastapi-docs-v1"}):
+                       input={"fetch_k": fetch_k, "backend": RERANKER_BACKEND,
+                              "index": "fastapi-docs-v1"}):
         result = _index.query(vector=vec, top_k=fetch_k, include_metadata=True)
 
         chunks = [
@@ -126,18 +129,30 @@ def retrieve(state: RAGState) -> RAGState:
         ]
 
         reranker_cost = 0.0
-        if RERANK:
+
+        if RERANKER_BACKEND == "haiku":
+            from production_rag_forensics.retrieval.reranker import Reranker
             reranker = Reranker()
             chunks = reranker.rerank(state["query"], chunks, top_k=TOP_K)
             reranker_cost = chunks[0].pop("rerank_cost_usd", 0.0) if chunks else 0.0
 
+        elif RERANKER_BACKEND == "cross_encoder":
+            from production_rag_forensics.retrieval.cross_encoder_reranker import get_reranker
+            chunks = get_reranker().rerank(state["query"], chunks, top_k=TOP_K)
+            # cross-encoder has no API cost
+
         if lf:
+            def _top_score(c: dict) -> float:
+                for key in ("cross_encoder_score", "reranker_score"):
+                    if key in c:
+                        return round(c[key], 4)
+                return round(c["score"], 4)
             lf.update_current_span(
                 output={
                     "chunks_returned": len(chunks),
-                    "reranked": RERANK,
+                    "backend": RERANKER_BACKEND,
                     "reranker_cost_usd": reranker_cost,
-                    "scores": [round(c.get("reranker_score", c["score"]), 4) for c in chunks],
+                    "scores": [_top_score(c) for c in chunks],
                     "sources": [c["source_file"] for c in chunks],
                 }
             )
@@ -146,7 +161,7 @@ def retrieve(state: RAGState) -> RAGState:
         **state,
         "retrieved_chunks":  chunks,
         "reranker_cost_usd": reranker_cost,
-        "reranked":          RERANK,
+        "reranked":          RERANKER_BACKEND != "none",
     }
 
 
@@ -233,8 +248,8 @@ def run_query(query: str) -> dict:
             "output_tokens":          int,
             "cache_creation_tokens":  int,
             "cache_read_tokens":      int,
-            "reranker_cost_usd":      float,       # 0.0 if RERANK=False
-            "reranked":               bool,
+            "reranker_cost_usd":      float,       # 0.0 if RERANKER_BACKEND="none" or "cross_encoder"
+            "reranked":               bool,        # False if RERANKER_BACKEND="none"
         }
 
     If Langfuse is configured, wraps the entire invocation in a parent trace

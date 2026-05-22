@@ -286,3 +286,40 @@ identified, measured, and documented in docs/failure_modes.md.
 - Re-run eval on cross_reference category only (30 questions, ~$0.40)
 - Measure precision@5 and faithfulness delta before/after reranking
 - Document whether reranking earns its place for FM-4
+
+## 2026-05-22 — Reranking investigation: three configs, dense-only wins
+
+**Worked on:** Built Haiku LLM reranker and cross-encoder reranker; ran three-way
+measurement on cross_reference (30 questions); documented FM-4 mitigation results.
+
+**Decisions:**
+- Reranking removed from the pipeline default — dense-only retrieval wins on all
+  measured metrics; RERANKER_BACKEND reset to "none"
+- Cross-encoder (ms-marco-MiniLM-L-6-v2) chosen as the local reranker to minimize
+  cost; module-level singleton to avoid per-query model reload (80MB weights)
+- Per-source diversity cap (MAX_PER_SOURCE=2) added to both rerankers after Haiku
+  without cap showed same-source flooding (3/5 slots from one file)
+- FM-4 closed as an active mitigation target — the binding constraint is corpus
+  structure (knowledge fragmentation), not retrieval signal quality
+
+**Measurements:**
+- Dense-only baseline (cross_reference): mean faithfulness 3.90, mean latency 10,601ms
+- Haiku LLM reranker (pool=20, no cap): mean faithfulness 3.87, mean latency 39,444ms
+- Cross-encoder + diversity cap (pool=50): mean faithfulness 3.70, mean latency 13,934ms
+- Cross-encoder per-question: helped 6 records (all retrieval misses at baseline),
+  hurt 8 records (7 of 8 were clean faith=4-5 answers that reranking degraded)
+- Prompt caching: zero cache tokens across all 150 records — system prompt ~35 tokens,
+  below Anthropic's 1024-token minimum cacheable prefix
+
+**What surprised me:**
+- Reranking hurts more than it helps on a balanced question set — the asymmetry is
+  structural: more clean answers to break than misses to rescue, so pointwise reranking
+  nets negative even when it improves individual misses
+- Prompt caching was listed in the 2026-05-21 journal as a cost explanation; confirmed
+  via cache_creation_tokens=0 across all records that caching never activated — the
+  cost underrun was cache miss, not cache hit
+
+**Next:**
+- FM-2 and FM-3 mitigation: test generation-side interventions (anti-injection prompt
+  instruction for FM-2; quote-before-claim or re-read instruction for FM-3)
+- Run full 150-question eval after each generation prompt change to measure delta

@@ -21,6 +21,7 @@ dependencies = [
     "tenacity",
     "openai",
     "google-genai",
+    "sentence-transformers",
 ]
 
 [project.optional-dependencies]

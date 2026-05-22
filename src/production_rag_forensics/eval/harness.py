@@ -209,9 +209,11 @@ def run(
 
             chunks_out = [
                 {
-                    "source_file": c["source_file"],
-                    "score":       round(c["score"], 4),
-                    "chunk_index": i,
+                    "source_file":   c["source_file"],
+                    "score":         round(c["score"], 4),
+                    "chunk_index":   i,
+                    **({"reranker_score": round(c["reranker_score"], 4)} if "reranker_score" in c else {}),
+                    **({"dense_score":    round(c["dense_score"],    4)} if "dense_score"    in c else {}),
                 }
                 for i, c in enumerate(result["chunks"])
             ]

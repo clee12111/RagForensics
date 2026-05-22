@@ -319,29 +319,46 @@ proximity of A-chunks and B-chunks does not produce an A+B answer.
 
 ### Mitigation
 
-Not yet measured. Ranked candidates:
+Three retrieval configurations measured on cross_reference (30 questions):
 
-1. **Reranking with joint query-chunk scoring**: A reranker (Claude Haiku 4.5, as
-   planned in the stack) scores each chunk against the full query including the integration
-   requirement. A reranker may deprioritize A-only chunks when the query asks about A+B,
-   surfacing a chunk that mentions both even if it scores lower on dense similarity.
-   Expected to help for cases where a joint-mention chunk exists but ranks outside top_k=5.
+| Config | Mean Faithfulness | Mean Latency | Faith=0 |
+|---|---|---|---|
+| Dense-only (baseline) | 3.90 | 10,601ms | 3 |
+| Haiku LLM reranker (pool=20, no cap) | 3.87 | 39,444ms | 3 |
+| Cross-encoder + diversity cap + pool=50 | 3.70 | 13,934ms | 4 |
 
-2. **Query decomposition before retrieval**: Decompose "how does X interact with Y?" into
-   sub-queries ["describe X behavior", "describe Y behavior", "X Y interaction"]. Run
-   retrieval on each, merge via RRF. Increases retrieval breadth; still does not create
-   integration content if it doesn't exist in the corpus.
+Dense-only wins. Both rerankers are neutral-to-negative.
 
-3. **Hybrid retrieval (sparse + dense)**: BM25 keyword co-occurrence may surface chunks
-   that contain both terms. Less likely to help for cross-reference questions than for
-   terminology-specific syntactic questions, but no measurement yet.
+Per-question asymmetry (cross-encoder vs baseline):
+- CE helped 6 records — all were retrieval misses or partial hits at baseline
+  (dense was already struggling; reranking recovered content, e.g. c3_12 0→5,
+  c3_24 0→5)
+- CE hurt 8 records — 7 of 8 were clean baseline answers (faith 4–5) that the
+  cross-encoder degraded by promoting higher-relevance-scored chunks that
+  carried less of the specific context the answer needed
 
-4. **Abstention instruction for integration gaps**: Instruct the model to distinguish
-   between "I have partial evidence and can synthesize" vs. "the context requires
-   information that is not present in any retrieved chunk." Likely increases faith=3→4
-   transition on cases where the model is already honest; does not add content.
+Mechanism: Both rerankers score each chunk independently against the query
+(pointwise relevance). Neither models "does this set of 5 chunks together
+answer the question?" On questions where dense cosine ordering already
+assembled a complete set, pointwise reranking breaks the assembly. On
+questions where dense missed, reranking can recover. Net effect is negative
+because there are more clean answers to break than misses to rescue.
 
-Haiku reranking is queued as the next retrieval improvement in the build order.
+This is knowledge fragmentation: the integration content for multi-document
+synthesis questions does not exist as a retrievable unit in the corpus.
+Reranking on any signal cannot surface what does not exist. The binding
+constraint is corpus structure, not retrieval signal quality.
+
+Production solutions, none of which are reranking:
+1. **Cross-document chunking at index time** (CDTA-style) — synthesize
+   integration content into unified chunks before indexing
+2. **GraphRAG** — model entity relationships explicitly for multi-hop traversal
+3. **Agentic re-retrieval** — orchestration-layer loop that judges sufficiency
+   and re-retrieves with reformulated queries (this is the in-stack future
+   experiment; LangGraph conditional branching would finally earn its place here)
+
+All three are out of scope for this project and documented as the path forward
+for the production-scale autopsy.
 
 ### Generalization
 
@@ -355,4 +372,7 @@ missing integration documentation. Production RAG stacks targeting developer doc
 will reliably surface this failure in cross-reference and multi-step workflow query classes.
 The mitigation requires either augmenting the corpus (synthetic integration documents) or
 improving the generator's ability to synthesize across partial evidence — neither of which
-is a standard retrieval optimization.
+is a standard retrieval optimization. Iterative/agentic retrieval with a validated
+sufficiency gate is the orchestration-layer answer to knowledge fragmentation; a prior
+implementation of this pattern (Pydantic-validated re-retrieval) exists in the aether
+project.

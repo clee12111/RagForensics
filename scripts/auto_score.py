@@ -37,22 +37,22 @@ def _score_with_retry(judge, question: str, chunks: list, answer: str):
         try:
             return judge.score(question, chunks, answer)
         except ServerError as exc:
-            if exc.args[0] != 503:
+            if exc.code != 503:
                 raise
             print(f"  503 unavailable -- retry {attempt}/3 in {wait}s")
             time.sleep(wait)
     return judge.score(question, chunks, answer)  # final attempt, fail loud
 
-RESULTS_PATH = Path("data/eval_results.jsonl")
+DEFAULT_RESULTS_PATH = Path("data/eval_results.jsonl")
 
 _AMBIGUOUS = {2, 3}
 
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
-def _load_records() -> list[dict]:
+def _load_records(path: Path) -> list[dict]:
     records = []
-    with RESULTS_PATH.open(encoding="utf-8") as f:
+    with path.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -60,8 +60,8 @@ def _load_records() -> list[dict]:
     return records
 
 
-def _save_records(records: list[dict]) -> None:
-    with RESULTS_PATH.open("w", encoding="utf-8") as f:
+def _save_records(records: list[dict], path: Path) -> None:
+    with path.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
 
@@ -100,14 +100,14 @@ def _print_summary(
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def run(limit: int | None = None) -> None:
+def run(limit: int | None = None, results: Path = DEFAULT_RESULTS_PATH) -> None:
     from production_rag_forensics.eval.judge import Judge
 
-    if not RESULTS_PATH.exists():
-        print(f"Error: {RESULTS_PATH} not found.", file=sys.stderr)
+    if not results.exists():
+        print(f"Error: {results} not found.", file=sys.stderr)
         sys.exit(1)
 
-    records  = _load_records()
+    records  = _load_records(results)
     unscored = [i for i, r in enumerate(records) if r.get("faithfulness") is None]
 
     if limit:
@@ -150,7 +150,7 @@ def run(limit: int | None = None) -> None:
         records[rec_idx]["judge_provider"]  = label
         records[rec_idx]["judge_reasoning"] = reasoning
         records[rec_idx]["judge_cost_usd"]  = round(record_cost, 6)
-        _save_records(records)
+        _save_records(records, results)
 
         print(
             f"{r['id']} [{r['category']}] -- "
@@ -164,12 +164,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="LLM-as-judge auto-scorer")
     p.add_argument("--limit", type=int, default=None,
                    help="Score only first N unscored records")
+    p.add_argument("--results", "--input", dest="results", type=Path,
+                   default=DEFAULT_RESULTS_PATH,
+                   help="Path to eval results file (default: data/eval_results.jsonl)")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    run(limit=args.limit)
+    run(limit=args.limit, results=args.results)
 
 
 if __name__ == "__main__":
