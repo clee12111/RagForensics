@@ -159,3 +159,29 @@
 - Start Docker Desktop, wire Langfuse keys into .env, confirm all 3 node spans appear under parent trace
 - Run test_graph.py second time to confirm cache_read=2622, cache_creation=0
 - Phase 2: src/eval/harness.py — Cody writes first eval questions before harness is built
+
+## 2026-05-22 — Full 150-question eval baseline run
+
+**Worked on:** Eval harness built and validated; full 150-question baseline run completed across all 5 categories.
+
+**Decisions:**
+- Resume capability added to harness before full run — a 529 at question 140 without resume would have lost all prior results and cost a full re-run
+- Fresh delete of smoke test records before full run — smoke test cache-miss costs would have skewed per-category cost measurements
+- Retry logic scoped to 529 only, fail loud on all other errors — infrastructure noise should not mask code bugs
+
+**Measurements:**
+- Total questions: 150 (30 per category)
+- Total cost: $1.9537 (estimate was $2.17 — 10% under, explained by cache hits on questions 2-150)
+- Mean latency overall: 9,212ms
+- Per-category mean latency: conceptual 11,540ms, cross_reference 10,601ms, syntactic 9,177ms, edge_case 8,629ms, out_of_scope 6,116ms
+- Per-category cost: conceptual $0.430, cross_reference $0.446, edge_case $0.384, syntactic $0.396, out_of_scope $0.297
+- Failed questions: 0
+- 529 retries: 0
+
+**What surprised me:**
+- out_of_scope is 47% faster than conceptual (6.1s vs 11.5s mean) — short refusals generate fewer output tokens, directly reducing latency and cost. The model's answer length is a latency driver, not just model load.
+
+**Next:**
+- Manual faithfulness scoring (5-point scale) across all 150 results — start with out_of_scope and cross_reference as the highest-signal categories
+- precision@5 scoring: for each question, mark which of the 5 retrieved chunks were actually relevant
+- First failure mode candidates will emerge from scoring
