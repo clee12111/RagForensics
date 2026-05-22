@@ -178,6 +178,16 @@
 - Failed questions: 0
 - 529 retries: 0
 
+**Correction (2026-05-22):** Prompt caching did not activate on the baseline 
+150-question run. Anthropic requires a minimum of 1,024 tokens in the cached 
+prefix; the system prompt is ~35 tokens. cache_creation_input_tokens = 0 across 
+all 150 records — confirmed via scripts/check_cache.py. The 10% cost underrun 
+($2.17 estimate → $1.95 actual) was attributed to cache hits in the original 
+entry; the correct explanation is output token variance across questions. 
+Caching requires either a substantially longer static system prompt or a 
+fixed few-shot block embedded in the prefix to reach the 1,024-token threshold. 
+Not a code bug — a threshold the implementation silently fell below.
+
 **What surprised me:**
 - out_of_scope is 47% faster than conceptual (6.1s vs 11.5s mean) — short refusals generate fewer output tokens, directly reducing latency and cost. The model's answer length is a latency driver, not just model load.
 
