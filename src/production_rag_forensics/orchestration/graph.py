@@ -70,6 +70,7 @@ class RAGState(TypedDict):
     query_embedding:   Optional[list[float]]
     retrieved_chunks:  Optional[list[dict]]
     answer:            Optional[str]
+    usage:             Optional[dict]   # {input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens}
 
 
 # ── Graph nodes ───────────────────────────────────────────────────────────────
@@ -162,13 +163,16 @@ def generate(state: RAGState) -> RAGState:
                 },
             )
 
-    # Log cache stats directly — not threaded through RAGState (not part of the schema)
-    print(
-        f"[generate] usage: input={usage.input_tokens} output={usage.output_tokens} "
-        f"cache_creation={cache_created} cache_read={cache_read}"
-    )
-
-    return {**state, "answer": answer}
+    return {
+        **state,
+        "answer": answer,
+        "usage": {
+            "input_tokens":           usage.input_tokens,
+            "output_tokens":          usage.output_tokens,
+            "cache_creation_tokens":  cache_created,
+            "cache_read_tokens":      cache_read,
+        },
+    }
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
@@ -196,9 +200,13 @@ def run_query(query: str) -> dict:
 
     Returns:
         {
-            "query":  str,
-            "answer": str,
-            "chunks": list[dict]  # {text, source_file, header_path, score}
+            "query":                  str,
+            "answer":                 str,
+            "chunks":                 list[dict],  # {text, source_file, header_path, score}
+            "input_tokens":           int,
+            "output_tokens":          int,
+            "cache_creation_tokens":  int,
+            "cache_read_tokens":      int,
         }
 
     If Langfuse is configured, wraps the entire invocation in a parent trace
@@ -211,6 +219,7 @@ def run_query(query: str) -> dict:
         "query_embedding":  None,
         "retrieved_chunks": None,
         "answer":           None,
+        "usage":            None,
     }
 
     if lf:
@@ -225,8 +234,13 @@ def run_query(query: str) -> dict:
     else:
         final = _graph.invoke(initial_state)
 
+    usage = final.get("usage") or {}
     return {
-        "query":  final["query"],
-        "answer": final["answer"],
-        "chunks": final["retrieved_chunks"] or [],
+        "query":                  final["query"],
+        "answer":                 final["answer"],
+        "chunks":                 final["retrieved_chunks"] or [],
+        "input_tokens":           usage.get("input_tokens", 0),
+        "output_tokens":          usage.get("output_tokens", 0),
+        "cache_creation_tokens":  usage.get("cache_creation_tokens", 0),
+        "cache_read_tokens":      usage.get("cache_read_tokens", 0),
     }

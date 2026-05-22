@@ -35,9 +35,10 @@ env/
 # Cloned source repos (corpus ingestion clones here)
 .cache/
 
-# Data files (corpus is large; eval set is committed)
+# Data files (corpus is large; eval set is committed; results are local)
 data/corpus/
 data/embeddings/
+data/eval_results.jsonl
 *.sqlite
 *.db
 
